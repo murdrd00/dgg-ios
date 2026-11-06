@@ -6,10 +6,6 @@ A native iOS app for [destiny.gg](https://www.destiny.gg). It shows the Big Scre
 
 DGG is still in development, and there are no builds to install yet. For Apple TV, see [DGGTV](https://github.com/murdrd00/dgg-tv).
 
-![The DGG apps for Apple TV and iPhone](docs/showcase.jpg)
-
-The apps at a glance. The chat, polls and viewer counts are staged, and CarPlay is a plan rather than something you can use yet.
-
 <p>
   <img src="docs/watching.png" alt="Watching a stream with chat underneath" width="49%">
   <img src="docs/audio.png" alt="Audio only with a poll, in light mode" width="49%">
