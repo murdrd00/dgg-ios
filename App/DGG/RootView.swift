@@ -12,11 +12,26 @@ struct DGGApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
-                .preferredColorScheme(.dark)
-                // The light blue from the icon. The default reads too dark here.
-                .tint(Color(red: 0.36, green: 0.68, blue: 0.95))
+                .tint(Color(uiColor: UIColor { $0.userInterfaceStyle == .dark
+                    // The light blue from the icon, deeper on a light page.
+                    ? UIColor(red: 0.36, green: 0.68, blue: 0.95, alpha: 1)
+                    : UIColor(red: 0.05, green: 0.42, blue: 0.78, alpha: 1) }))
         }
     }
+}
+
+extension Color {
+    /// The page behind chat.
+    static let page = Color(uiColor: UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(white: 0.06, alpha: 1) : .systemBackground })
+    /// Pills, cards and fields, a step off the page in either mode.
+    static let raised = Color.primary.opacity(0.08)
+}
+
+/// Who the user card is open for.
+struct ChatUserRef: Identifiable {
+    let nick: String
+    var id: String { nick }
 }
 
 struct RootView: View {
@@ -24,6 +39,7 @@ struct RootView: View {
     @State private var emotes = EmoteImageStore()
     @State private var showSettings = false
     @State private var chatShown = true
+    @State private var card: ChatUserRef?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
 
@@ -50,7 +66,7 @@ struct RootView: View {
                 }
             }
         }
-        .background(Color(white: 0.06).ignoresSafeArea())
+        .background(Color.page.ignoresSafeArea())
         .task {
             ChatText.size = vm.chatFontSize
             vm.start()
@@ -79,6 +95,11 @@ struct RootView: View {
             SettingsView(vm: vm)
                 .presentationDetents([.large])
         }
+        .sheet(item: $card) { user in
+            UserCard(nick: user.nick, vm: vm)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var chatColumn: some View {
@@ -86,7 +107,8 @@ struct RootView: View {
             EmbedStrip(vm: vm, onPick: watch, onSettings: { showSettings = true })
             if let pin = vm.shownPin { PinCard(pin: pin, vm: vm, emotes: emotes) }
             PollCard(vm: vm)
-            ChatList(vm: vm, emotes: emotes, onLink: follow)
+            ChatList(vm: vm, emotes: emotes, onLink: follow,
+                     onUser: { card = ChatUserRef(nick: $0) })
             Composer(vm: vm, emotes: emotes, onSignIn: { showSettings = true })
         }
     }
@@ -94,7 +116,7 @@ struct RootView: View {
     #if DEBUG
     private func runTestHooks() {
         let env = ProcessInfo.processInfo.environment
-        if env["DGG_TEST_SIGNED_IN"] != nil { vm.pretendToSignIn() }
+        if let nick = env["DGG_TEST_SIGNED_IN"] { vm.pretendToSignIn(as: nick) }
         if env["DGG_TEST_POLL"] != nil { vm.runFakePoll() }
         if let id = env["DGG_TEST_YOUTUBE"] { watch(EmbedRef(platform: .youtube, path: id)) }
     }
@@ -139,6 +161,14 @@ struct EmbedStrip: View {
                     .padding(.leading, 10)
                 }
                 .scrollIndicators(.hidden)
+                // Pills fade out at the end instead of being cut off.
+                .mask {
+                    HStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .leading,
+                                       endPoint: .trailing).frame(width: 18)
+                    }
+                }
                 .onChange(of: vm.selected) { _, ref in
                     guard let ref else { return }
                     withAnimation(.snappy(duration: 0.28)) {
@@ -148,13 +178,23 @@ struct EmbedStrip: View {
             }
             if vm.pinIsHidden {
                 Button { vm.togglePin() } label: {
-                    Image(systemName: "pin").foregroundStyle(.white.opacity(0.65))
+                    Image(systemName: "pin").foregroundStyle(Color.primary.opacity(0.65))
                 }
             }
-            Circle().fill(vm.connected ? .green : .orange).frame(width: 7, height: 7)
+            HStack(spacing: 4) {
+                Circle().fill(vm.connected ? .green : .orange).frame(width: 7, height: 7)
+                if vm.connected {
+                    Text(vm.viewerCount.formatted())
+                        .font(.caption2).monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(vm.connected ? "\(vm.viewerCount) connected" : vm.link.label)
             Button(action: onSettings) {
                 Image(systemName: "gearshape.fill")
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(Color.primary.opacity(0.65))
                     .frame(width: 34, height: 34)
             }
             .padding(.trailing, 4)
@@ -172,12 +212,12 @@ struct EmbedStrip: View {
                     .lineLimit(1)
                 Text("\(entry.viewers)")
                     .font(.caption2).monospacedDigit()
-                    .foregroundStyle(on ? AnyShapeStyle(.black.opacity(0.6)) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(on ? AnyShapeStyle(Color.page.opacity(0.65)) : AnyShapeStyle(.secondary))
             }
-            .foregroundStyle(on ? .black : .white)
+            .foregroundStyle(on ? Color.page : Color.primary)
             .padding(.horizontal, 10)
             .frame(height: 30)
-            .background(on ? Color.white : Color.white.opacity(0.1), in: .capsule)
+            .background(on ? Color.primary : Color.raised, in: .capsule)
         }
         .buttonStyle(.plain)
     }
@@ -198,7 +238,8 @@ struct PinCard: View {
     @State private var open = false
     @State private var fullHeight: CGFloat = 0
 
-    private var collapsed: CGFloat { vm.chatFontSize * 3.3 }
+    /// Two whole lines, so a long pin never stops halfway through one.
+    private var collapsed: CGFloat { (vm.chatFontSize * 1.62).rounded() * 2 }
 
     private var text: NSAttributedString {
         cache.string(id: pin.id, generation: emotes.generation, size: vm.chatFontSize) {
@@ -207,30 +248,35 @@ struct PinCard: View {
     }
 
     var body: some View {
-        GeometryReader { box in
-            let full = ceil(text.boundingRect(
-                with: CGSize(width: box.size.width, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin], context: nil).height)
-            ChatLineLabel(attributed: text, width: box.size.width)
-                .preference(key: PinHeight.self, value: full)
+        HStack(alignment: .top, spacing: 8) {
+            GeometryReader { box in
+                let full = ceil(text.boundingRect(
+                    with: CGSize(width: box.size.width, height: .greatestFiniteMagnitude),
+                    options: [.usesLineFragmentOrigin], context: nil).height)
+                ChatLineLabel(attributed: text, width: box.size.width)
+                    .preference(key: PinHeight.self, value: full)
+            }
+            .onPreferenceChange(PinHeight.self) { fullHeight = $0 }
+            .frame(height: open ? max(collapsed, fullHeight) : min(collapsed, max(fullHeight, 1)))
+            .clipped()
+            Button { vm.togglePin() } label: {
+                Image(systemName: "xmark").font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.primary.opacity(0.65))
+                    .frame(width: 22, height: 22)
+            }
         }
-        .onPreferenceChange(PinHeight.self) { fullHeight = $0 }
-        .frame(height: open ? max(collapsed, fullHeight) : min(collapsed, max(fullHeight, 1)))
-        .clipped()
-        .padding(.horizontal, 12).padding(.vertical, 6)
-        .padding(.trailing, 18)
-        .background(Color.white.opacity(0.07))
+        // Line height puts its slack above the text, so less padding goes on top
+        // for the card to look even.
+        .padding(.leading, 12).padding(.trailing, 8)
+        .padding(.top, 2).padding(.bottom, 10)
+        .background(Color.raised)
         .contentShape(.rect)
         // A long pin was cut off with no way to read the rest.
         .onTapGesture {
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                            to: nil, from: nil, for: nil)
             guard fullHeight > collapsed else { return }
             withAnimation(.snappy(duration: 0.25)) { open.toggle() }
-        }
-        .overlay(alignment: .topTrailing) {
-            Button { vm.togglePin() } label: {
-                Image(systemName: "xmark").font(.caption2.weight(.bold))
-                    .foregroundStyle(.white.opacity(0.65)).padding(8)
-            }
         }
     }
 }
@@ -265,7 +311,7 @@ struct PollCard: View {
                 .frame(height: min(Double(poll.options.count), 3.5) * (Self.rowHeight + Self.gap) - Self.gap)
             }
             .padding(10)
-            .background(Color.white.opacity(0.07))
+            .background(Color.raised)
         }
     }
 
@@ -280,14 +326,14 @@ struct PollCard: View {
                 if !poll.hidden { Text("\(Int((share * 100).rounded()))%").monospacedDigit() }
             }
             .font(.footnote)
-            .foregroundStyle(.white)
+            .foregroundStyle(.primary)
             .padding(.horizontal, 10).frame(height: Self.rowHeight)
             .background {
                 GeometryReader { box in
                     ZStack(alignment: .leading) {
-                        Color.white.opacity(0.08)
+                        Color.raised
                         if !poll.hidden {
-                            Color.white.opacity(0.2).frame(width: box.size.width * share)
+                            Color.primary.opacity(0.18).frame(width: box.size.width * share)
                         }
                     }
                 }
@@ -334,8 +380,8 @@ struct Composer: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 6) {
                         ForEach(suggestions, id: \.self) { name in
-                            Button(name) { complete(name) }
-                                .font(.footnote).buttonStyle(.bordered).controlSize(.small)
+                            Button { complete(name) } label: { suggestion(name) }
+                                .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 10)
@@ -353,6 +399,23 @@ struct Composer: View {
                 }
             }
         }
+    }
+
+    /// The emote itself beside its name, so you can see what you're picking.
+    private func suggestion(_ name: String) -> some View {
+        HStack(spacing: 5) {
+            if let look = emotes.preview(name) {
+                let box: CGFloat = 26
+                let size = min(box / CGFloat(max(look.base.height, 1)), 64 / CGFloat(look.advance))
+                EmoteView(look: look, scale: size, store: emotes)
+                    .frame(width: CGFloat(look.advance) * size, height: box)
+                    .clipped()
+            }
+            Text(name).font(.footnote).lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 36)
+        .background(Color.raised, in: .capsule)
     }
 
     private var field: some View {
@@ -373,7 +436,7 @@ struct Composer: View {
                     }
                 }
                 .padding(.horizontal, 12).padding(.vertical, 8)
-                .background(Color.white.opacity(0.1), in: .rect(cornerRadius: 18))
+                .background(Color.raised, in: .rect(cornerRadius: 18))
             if !draft.isEmpty {
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
@@ -381,6 +444,15 @@ struct Composer: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
+        .onChange(of: vm.composerPrefill, initial: true) { _, _ in takePrefill() }
+    }
+
+    /// Whisper, from the user card, fills the box and hands over the keyboard.
+    private func takePrefill() {
+        guard let text = vm.composerPrefill else { return }
+        vm.composerPrefill = nil
+        draft = text
+        typing = true
     }
 
     private func complete(_ name: String) {
@@ -425,7 +497,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Account")
                 } footer: {
-                    Text("Create a key under Profile, then Developer. It stays in this phone's Keychain and is only sent to destiny.gg chat. Treat it like a password.")
+                    Text("Create a key under Profile, then Developer. It stays in this phone's Keychain and is only sent to destiny.gg. Treat it like a password.")
                 }
 
                 Section("Chat") {
@@ -447,6 +519,19 @@ struct SettingsView: View {
                     Text("Streams")
                 } footer: {
                     Text("Low delay applies to Kick. If a stream buffers a lot, raise it: more seconds means more delay but fewer stalls.")
+                }
+
+                if !vm.ignored.isEmpty {
+                    Section("Ignored") {
+                        ForEach(vm.ignored.sorted(), id: \.self) { nick in
+                            HStack {
+                                Text(nick)
+                                Spacer()
+                                Button("Unignore") { vm.setIgnored(nick, false) }
+                                    .buttonStyle(.borderless)
+                            }
+                        }
+                    }
                 }
 
                 Section("About") {

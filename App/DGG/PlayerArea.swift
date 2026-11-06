@@ -179,6 +179,8 @@ struct PlayerArea: View {
     }
 
     private func toggleControls() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),
+                                        to: nil, from: nil, for: nil)
         withAnimation(.easeOut(duration: 0.18)) { controls.toggle() }
         if controls { pokeControls() }
     }

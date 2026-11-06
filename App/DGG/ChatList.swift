@@ -10,13 +10,15 @@ struct ChatList: UIViewControllerRepresentable {
     var vm: BigscreenViewModel
     var emotes: EmoteImageStore
     var onLink: (String) -> Void
+    var onUser: (String) -> Void
 
     func makeUIViewController(context: Context) -> ChatListController {
-        ChatListController(vm: vm, emotes: emotes, onLink: onLink)
+        ChatListController(vm: vm, emotes: emotes, onLink: onLink, onUser: onUser)
     }
 
     func updateUIViewController(_ c: ChatListController, context: Context) {
         c.onLink = onLink
+        c.onUser = onUser
     }
 }
 
@@ -49,22 +51,36 @@ final class ChatCell: UITableViewCell {
 
     required init?(coder: NSCoder) { fatalError("not supported") }
 
-    func show(_ s: NSAttributedString, width: CGFloat, height: CGFloat, dimmed: Bool) {
+    func show(_ s: NSAttributedString, width: CGFloat, height: CGFloat, top: CGFloat,
+              dimmed: Bool, highlighted: Bool) {
         text.textContainer.size = CGSize(width: width, height: .greatestFiniteMagnitude)
-        text.frame = CGRect(x: ChatListController.inset, y: 0, width: width, height: height)
+        text.frame = CGRect(x: ChatListController.inset, y: top, width: width, height: height)
         text.apply(s)
         contentView.alpha = dimmed ? 0.32 : 1
+        contentView.backgroundColor = highlighted ? ChatText.highlight : nil
     }
 
-    /// The link under a point in this cell, if there is one.
-    func link(at point: CGPoint) -> String? {
+    enum Target { case link(String), user(String) }
+
+    /// What's under a point in this cell. Asks about the glyph actually there,
+    /// because the layout manager otherwise answers with the nearest one, and a
+    /// tap in the empty end of a line would count as hitting its last word.
+    func target(at point: CGPoint) -> Target? {
         let p = contentView.convert(point, to: text)
         let manager = text.layoutManager
-        var fraction: CGFloat = 0
-        let i = manager.characterIndex(for: p, in: text.textContainer,
-                                       fractionOfDistanceBetweenInsertionPoints: &fraction)
+        let glyph = manager.glyphIndex(for: p, in: text.textContainer)
+        let box = manager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1),
+                                       in: text.textContainer)
+        guard box.insetBy(dx: -6, dy: -3).contains(p) else { return nil }
+        let i = manager.characterIndexForGlyph(at: glyph)
         guard i < text.textStorage.length else { return nil }
-        return text.textStorage.attribute(.chatLink, at: i, effectiveRange: nil) as? String
+        if let link = text.textStorage.attribute(.chatLink, at: i, effectiveRange: nil) as? String {
+            return .link(link)
+        }
+        if let nick = text.textStorage.attribute(.chatUser, at: i, effectiveRange: nil) as? String {
+            return .user(nick)
+        }
+        return nil
     }
 }
 
@@ -77,6 +93,7 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
     private let vm: BigscreenViewModel
     private let emotes: EmoteImageStore
     var onLink: (String) -> Void
+    var onUser: (String) -> Void
 
     private let table = UITableView(frame: .zero, style: .plain)
     private let jump = UIButton(configuration: .filled())
@@ -97,11 +114,14 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
     private var layoutWidth: CGFloat = 0
     private var generation = -1
     private var fontSize = 0.0
+    private var rowStyle = 0
 
-    init(vm: BigscreenViewModel, emotes: EmoteImageStore, onLink: @escaping (String) -> Void) {
+    init(vm: BigscreenViewModel, emotes: EmoteImageStore, onLink: @escaping (String) -> Void,
+         onUser: @escaping (String) -> Void) {
         self.vm = vm
         self.emotes = emotes
         self.onLink = onLink
+        self.onUser = onUser
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -142,8 +162,8 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
         table.addGestureRecognizer(hold)
 
         jump.configuration?.cornerStyle = .capsule
-        jump.configuration?.baseBackgroundColor = UIColor(white: 0.16, alpha: 0.95)
-        jump.configuration?.baseForegroundColor = .white
+        jump.configuration?.baseBackgroundColor = .secondarySystemBackground
+        jump.configuration?.baseForegroundColor = .label
         jump.configuration?.buttonSize = .small
         jump.translatesAutoresizingMaskIntoConstraints = false
         jump.isHidden = true
@@ -191,9 +211,10 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
 
     private func tick() {
         if following, !touching { vm.flush() }
-        if generation != emotes.generation || fontSize != vm.chatFontSize {
+        if generation != emotes.generation || fontSize != vm.chatFontSize || rowStyle != vm.rowStyle {
             generation = emotes.generation
             fontSize = vm.chatFontSize
+            rowStyle = vm.rowStyle
             ChatText.size = fontSize
             heights = [:]
             table.reloadData()
@@ -281,7 +302,8 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
             return c
         }
         let c = table.dequeueReusableCell(withIdentifier: ChatCell.id, for: path) as! ChatCell
-        c.show(text(item), width: textWidth, height: height(id) - Self.rowGap, dimmed: dimmed)
+        c.show(text(item), width: textWidth, height: height(id) - Self.rowGap, top: Self.rowGap / 2,
+               dimmed: dimmed, highlighted: vm.isHighlighted(item))
         return c
     }
 
@@ -332,10 +354,15 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
                            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
+        // Tapping chat puts the keyboard away, wherever the tap lands.
+        view.window?.endEditing(true)
         let p = tap.location(in: table)
         guard let path = table.indexPathForRow(at: p),
-              let cell = table.cellForRow(at: path) as? ChatCell,
-              let word = cell.link(at: tap.location(in: cell.contentView)) else { return }
-        onLink(word)
+              let cell = table.cellForRow(at: path) as? ChatCell else { return }
+        switch cell.target(at: tap.location(in: cell.contentView)) {
+        case .link(let word): onLink(word)
+        case .user(let nick): onUser(nick)
+        case nil: break
+        }
     }
 }

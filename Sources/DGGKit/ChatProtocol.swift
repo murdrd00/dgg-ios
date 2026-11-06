@@ -140,6 +140,10 @@ public enum ChatEvent: Sendable {
     /// Who chat thinks we are, sent on connecting. Nil means a guest.
     case me(nick: String?)
     case message(ChatLine)
+    /// A private message to us.
+    case whisper(ChatLine)
+    /// The server took a whisper we sent.
+    case whisperSent
     case history([ChatLine])
     case userUpdate(ChatUser)
     case broadcast(text: String, at: Date)
@@ -237,6 +241,14 @@ public enum FrameParser {
             guard let p = try? dec.decode(MessagePayload.self, from: bytes),
                   let l = line(from: p) else { return nil }
             return .message(l)
+
+        case "PRIVMSG":
+            guard let p = try? dec.decode(MessagePayload.self, from: bytes),
+                  let l = line(from: p) else { return nil }
+            return .whisper(l)
+
+        case "PRIVMSGSENT":
+            return .whisperSent
 
         case "HISTORY":
             // An array of raw "MSG {...}" strings replayed on connect.

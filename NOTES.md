@@ -77,6 +77,33 @@ ids, so ids can't be used for this. Anything new queues like a normal line, so a
 reconnect can't move what's being read. The simulator doesn't freeze sockets, so this
 path has been tested against live chat from the command line but not seen in the app.
 
+## People and mentions
+
+Taken from the site's own client, `destinygg/chat-gui`, rather than guessed:
+
+- A highlighted line uses `$color-chat-highlight`, `#06263e`, which is dark blue. Your
+  name as a whole word counts, links don't, and neither do your own lines.
+- Stalk is `/api/chat/stalk`, which answers 403 to a guest. It's sent the Login Key as
+  the `authtoken` cookie. Chat accepts that, but whether this API does hasn't been tested.
+- Open Logs goes to rustlesearch.dev.
+- Whispers are `PRIVMSG {nick, data}`. Anything else starting with `/` is stopped in
+  `command`, because sent as a message it would be posted publicly.
+- Highlighted and ignored names are kept on this phone, not synced with the site.
+
+The connected count starts from `NAMES` and follows `JOIN` and `QUIT`.
+
+## Light and dark
+
+The site's flair colours are chosen for a dark page. `ChatText.readable` darkens pale ones
+in light mode. Colours in attributed strings have to be dynamic `UIColor`s, because
+cached lines don't get rebuilt when the mode changes.
+
+## CarPlay
+
+Not built. Apple only allows it with a category entitlement it grants on request, and
+video isn't a thing an app can show while driving, so the realistic form is audio only.
+It needs a paid developer account and background audio first.
+
 ## Posting
 
 `ChatClient.send(message:)` sends `MSG {"data": ...}`, and is only called from the

@@ -20,6 +20,7 @@
 		B3303ECB20DF3A806AA9C191 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 69B6D8471055B924E76C12B1 /* Assets.xcassets */; };
 		B5CC6201D5202BFBA399170D /* BigscreenViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5417B101CE51433CF51372 /* BigscreenViewModel.swift */; };
 		DFDC18F6379C05816AA3CE4E /* ChatLineLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8A66A7C29B7363B0B811A9 /* ChatLineLabel.swift */; };
+		E41E3778CECC8FD770DE6BFF /* UserCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83AE95E8316424D4B0C2484E /* UserCard.swift */; };
 		FE3E1F45AFF37C638DE8206B /* DGGKit in Frameworks */ = {isa = PBXBuildFile; productRef = EB914EA7246F60090CAC4011 /* DGGKit */; };
 /* End PBXBuildFile section */
 
@@ -34,6 +35,7 @@
 		5C89CC2A830F4A537C8E3435 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		69B6D8471055B924E76C12B1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		81A6E4637D74FCD8820F23EA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		83AE95E8316424D4B0C2484E /* UserCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserCard.swift; sourceTree = "<group>"; };
 		89712F18C69A1757E3794CC3 /* PlayerArea.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerArea.swift; sourceTree = "<group>"; };
 		9D5417B101CE51433CF51372 /* BigscreenViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigscreenViewModel.swift; sourceTree = "<group>"; };
 		CC35666D65945A0A9C8A88EC /* ChatList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatList.swift; sourceTree = "<group>"; };
@@ -96,6 +98,7 @@
 				4CCB453632CA9B6D7BAAAB0B /* PlatformIcon.swift */,
 				89712F18C69A1757E3794CC3 /* PlayerArea.swift */,
 				81A6E4637D74FCD8820F23EA /* RootView.swift */,
+				83AE95E8316424D4B0C2484E /* UserCard.swift */,
 			);
 			name = DGG;
 			path = App/DGG;
@@ -189,6 +192,7 @@
 				27B95DBAF7B4E8AA9E230274 /* PlatformIcon.swift in Sources */,
 				1221F252328DCF1B0E9B070A /* PlayerArea.swift in Sources */,
 				7AE4E60DE1C9E1512AB8534C /* RootView.swift in Sources */,
+				E41E3778CECC8FD770DE6BFF /* UserCard.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

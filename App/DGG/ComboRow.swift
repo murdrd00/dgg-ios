@@ -41,7 +41,7 @@ struct ComboRow: View {
             Text("x\(count)")
                 .font(.system(size: countSize, weight: .heavy))
                 .monospacedDigit()
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
                 .fixedSize()
                 .scaleEffect(scale, anchor: .leading)
             Spacer(minLength: 0)

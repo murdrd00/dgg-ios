@@ -59,6 +59,7 @@ extension NSAttributedString.Key {
     static let emote = NSAttributedString.Key("dggEmote")
     static let rainbow = NSAttributedString.Key("dggRainbow")
     static let chatLink = NSAttributedString.Key("dggLink")
+    static let chatUser = NSAttributedString.Key("dggUser")
 }
 
 /// What to draw in the space left for an emote.
@@ -308,7 +309,9 @@ enum ChatText {
 
     /// Tapping one is handled by `ChatCell`, which finds this attribute.
     static func link(_ s: String) -> NSAttributedString {
-        let color = UIColor(red: 0.42, green: 0.72, blue: 1, alpha: 1)
+        let color = UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 0.42, green: 0.72, blue: 1, alpha: 1)
+            : UIColor(red: 0.04, green: 0.38, blue: 0.75, alpha: 1) }
         return NSAttributedString(string: s, attributes: [
             .font: Self.font,
             .foregroundColor: color,
@@ -328,18 +331,36 @@ enum ChatText {
         return s
     }()
 
-    static let greentext = UIColor(red: 0x6c / 255, green: 0xa5 / 255, blue: 0x28 / 255, alpha: 1)
+    static let greentext = readable(UIColor(red: 0x6c / 255, green: 0xa5 / 255, blue: 0x28 / 255, alpha: 1))
+
+    /// The site's colours are all chosen for a dark page, and pale ones vanish on
+    /// a light one. In light mode this darkens them until they can be read.
+    static func readable(_ color: UIColor) -> UIColor {
+        UIColor { traits in
+            guard traits.userInterfaceStyle != .dark else { return color }
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            guard color.getRed(&r, green: &g, blue: &b, alpha: &a) else { return color }
+            let brightness = 0.3 * r + 0.59 * g + 0.11 * b
+            let scale = min(1, 0.42 / max(brightness, 0.01))
+            return UIColor(red: r * scale, green: g * scale, blue: b * scale, alpha: a)
+        }
+    }
+
+    /// The site's `$color-chat-highlight`, with a pale match for light mode.
+    static let highlight = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 0x06 / 255, green: 0x26 / 255, blue: 0x3e / 255, alpha: 1)
+        : UIColor(red: 0.83, green: 0.92, blue: 0.99, alpha: 1) }
 
     static func uiColor(hex: String?) -> UIColor {
         guard var h = hex?.trimmingCharacters(in: .whitespaces), !h.isEmpty else {
-            return UIColor.white.withAlphaComponent(0.78)
+            return UIColor.label.withAlphaComponent(0.78)
         }
         if h.hasPrefix("#") { h.removeFirst() }
         guard h.count == 6, let v = UInt32(h, radix: 16) else {
-            return UIColor.white.withAlphaComponent(0.78)
+            return UIColor.label.withAlphaComponent(0.78)
         }
-        return UIColor(red: CGFloat((v >> 16) & 0xFF) / 255,
-                       green: CGFloat((v >> 8) & 0xFF) / 255,
-                       blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+        return readable(UIColor(red: CGFloat((v >> 16) & 0xFF) / 255,
+                                green: CGFloat((v >> 8) & 0xFF) / 255,
+                                blue: CGFloat(v & 0xFF) / 255, alpha: 1))
     }
 }

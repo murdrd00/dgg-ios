@@ -12,7 +12,11 @@ struct DisplayLine: Identifiable, Hashable {
     let style: FlairStyle
     /// Who sent the message above: some emotes change based on it.
     var previousNick: String?
+    /// Set on a whisper. For one we sent, `line.nick` is who it went to.
+    var whisper: Whisper?
     var id: UUID { line.id }
+
+    enum Whisper: Hashable { case received, sent }
 }
 
 /// One row in the chat rail: either a message, or a cross-message emote combo.
@@ -261,6 +265,72 @@ final class BigscreenViewModel {
         didSet { Saved.store(latencyShown, "latencyShown") }
     }
 
+    // People
+
+    private(set) var ignored = Set(Saved.value("ignoredNicks", [String]())) {
+        didSet { Saved.store(Array(ignored), "ignoredNicks") }
+    }
+    private(set) var highlighted = Set(Saved.value("highlightNicks", [String]())) {
+        didSet { Saved.store(Array(highlighted), "highlightNicks") }
+    }
+    /// Bumped when a change means rows already on screen have to be redrawn.
+    private(set) var rowStyle = 0
+    /// Text waiting to go in the message box. The box takes it and clears this.
+    var composerPrefill: String?
+    @ObservationIgnored private var mentionPattern: (nick: String, regex: NSRegularExpression?)?
+
+    func isIgnored(_ nick: String) -> Bool { ignored.contains(nick.lowercased()) }
+    func isHighlighted(_ nick: String) -> Bool { highlighted.contains(nick.lowercased()) }
+    func isMe(_ nick: String) -> Bool { accountName?.lowercased() == nick.lowercased() }
+
+    func setIgnored(_ nick: String, _ on: Bool) {
+        if on {
+            ignored.insert(nick.lowercased())
+            purge(nick)
+        } else {
+            ignored.remove(nick.lowercased())
+        }
+    }
+
+    func toggleHighlight(_ nick: String) {
+        let key = nick.lowercased()
+        if highlighted.remove(key) == nil { highlighted.insert(key) }
+        rowStyle += 1
+    }
+
+    private func purge(_ nick: String) {
+        let target = nick.lowercased()
+        lines.removeAll { $0.line.nick.lowercased() == target }
+        pending.removeAll { $0.line.nick.lowercased() == target }
+        items.removeAll {
+            if case .message(let d) = $0 { return d.line.nick.lowercased() == target }
+            return false
+        }
+    }
+
+    /// As on the site: a line that says your name, or comes from someone you've
+    /// chosen to highlight, but never your own, and links don't count.
+    func isHighlighted(_ item: ChatItem) -> Bool {
+        guard case .message(let d) = item else { return false }
+        if d.whisper == .received { return true }
+        if d.whisper == .sent || isMe(d.line.nick) { return false }
+        if isHighlighted(d.line.nick) { return true }
+        guard let me = accountName, d.line.text.localizedCaseInsensitiveContains(me) else { return false }
+        if mentionPattern?.nick != me {
+            let pattern = "\\b" + NSRegularExpression.escapedPattern(for: me) + "\\b"
+            mentionPattern = (me, try? NSRegularExpression(pattern: pattern, options: .caseInsensitive))
+        }
+        let text = d.line.text.split(separator: " ").map(String.init)
+            .filter { !ChatText.isLink($0) }.joined(separator: " ")
+        let all = NSRange(location: 0, length: (text as NSString).length)
+        return mentionPattern?.regex?.firstMatch(in: text, range: all) != nil
+    }
+
+    /// Their last few messages, from the site. Nil if it wouldn't say.
+    func stalk(_ nick: String) async -> [StalkedLine]? {
+        try? await ChatHistory.stalk(nick, limit: 10, loginKey: LoginKey.load())
+    }
+
     /// Why chat refused the last message, for a few seconds.
     private(set) var chatNotice: String?
     private var noticeHide: Task<Void, Never>?
@@ -271,7 +341,11 @@ final class BigscreenViewModel {
         let known = ["muted": "You're muted", "banned": "You're banned",
                      "throttled": "Slow down a little", "duplicate": "You just said that",
                      "needlogin": "Sign in to chat", "submode": "Chat is in sub-only mode"]
-        chatNotice = known[reason] ?? "Message not sent (\(reason))"
+        say(known[reason] ?? "Message not sent (\(reason))")
+    }
+
+    private func say(_ notice: String) {
+        chatNotice = notice
         noticeHide?.cancel()
         noticeHide = Task { [weak self] in
             try? await Task.sleep(for: .seconds(4))
@@ -767,7 +841,7 @@ final class BigscreenViewModel {
     /// destiny.gg folds consecutive single-emote messages — from ANY users —
     /// into one counter line and drops the usernames entirely.
     private func appendOne(_ dl: DisplayLine) {
-        if let token = comboToken(dl.line.text), let last = items.last {
+        if dl.whisper == nil, let token = comboToken(dl.line.text), let last = items.last {
             switch last {
             case .combo(let id, let emote, let n, let embeds) where emote == token:
                 items[items.count - 1] = .combo(
@@ -875,7 +949,8 @@ final class BigscreenViewModel {
             // and each time the server replays lines already on screen.
             // Lines waiting while chat is scrolled back count as seen too.
             let seen = Set((lines + pending).map { Self.fingerprint($0.line) })
-            let fresh = old.filter { !seen.contains(Self.fingerprint($0)) }.map(display)
+            let fresh = old.filter { !seen.contains(Self.fingerprint($0)) && !isIgnored($0.nick) }
+                .map(display)
             // Anything new queues like any other line, so it can't move what's
             // being read. Only an empty chat takes it straight away.
             if lines.isEmpty { append(fresh) } else { pending.append(contentsOf: fresh) }
@@ -888,24 +963,31 @@ final class BigscreenViewModel {
             // Traffic means we are live, whatever the delegate reported.
             if link != .live { link = .live }
             tracker.observe(l)
-            pending.append(display(l))
+            if !isIgnored(l.nick) { pending.append(display(l)) }
+
+        case .whisper(let l):
+            guard !isIgnored(l.nick) else { break }
+            var line = display(l)
+            line.whisper = .received
+            pending.append(line)
+
+        case .whisperSent:
+            say("Whisper sent")
 
         case .moderated(let nick, _):
             // Match the web client: a muted/banned user's messages disappear.
-            let target = nick.lowercased()
-            lines.removeAll { $0.line.nick.lowercased() == target }
-            pending.removeAll { $0.line.nick.lowercased() == target }
-            items.removeAll {
-                if case .message(let d) = $0 {
-                    return d.line.nick.lowercased() == target
-                }
-                return false
-            }
+            purge(nick)
 
         case .protocolError(let reason):
             showNotice(reason)
 
-        case .broadcast, .join, .quit, .unhandled:
+        // NAMES only gives the count on connecting, so these keep it current.
+        case .join:
+            viewerCount += 1
+        case .quit:
+            viewerCount = max(0, viewerCount - 1)
+
+        case .broadcast, .unhandled:
             break
         }
     }
@@ -1014,7 +1096,34 @@ final class BigscreenViewModel {
             return
         }
         #endif
+        if clean.hasPrefix("/"), !clean.lowercased().hasPrefix("/me ") {
+            command(clean)
+            return
+        }
         client.send(message: clean)
+    }
+
+    /// A command must never reach chat as a message: `/w someone secret` would
+    /// post the secret for everyone to read.
+    private func command(_ text: String) {
+        let parts = text.split(separator: " ", maxSplits: 2).map(String.init)
+        let whisperVerbs = ["/w", "/whisper", "/msg", "/message", "/tell", "/t", "/notify"]
+        guard whisperVerbs.contains(parts[0].lowercased()) else {
+            say("That command isn't available here")
+            return
+        }
+        guard parts.count == 3 else {
+            say("Use /w nick message")
+            return
+        }
+        guard !isMe(parts[1]) else {
+            say("You can't whisper yourself")
+            return
+        }
+        client.whisper(to: parts[1], message: parts[2])
+        var echo = display(ChatLine(nick: parts[1], features: [], text: parts[2], at: Date(), watching: nil))
+        echo.whisper = .sent
+        pending.append(echo)
     }
 
     #if DEBUG
@@ -1022,9 +1131,9 @@ final class BigscreenViewModel {
     /// locally, and never reaches chat.
     private var pretendSignedIn = false
 
-    func pretendToSignIn() {
+    func pretendToSignIn(as nick: String) {
         pretendSignedIn = true
-        accountName = "TEST"
+        accountName = nick
     }
     #endif
 

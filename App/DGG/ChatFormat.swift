@@ -11,7 +11,7 @@ enum ChatFormat {
 
         switch item {
         case .combo(_, let emote, let count, _):
-            out.append(ChatText.plain("\(emote) x\(count)", .white, bold: true))
+            out.append(ChatText.plain("\(emote) x\(count)", .label, bold: true))
             return out
 
         case .message(let dl):
@@ -19,11 +19,13 @@ enum ChatFormat {
             // following themselves gets a `>` in place of their name.
             let action = dl.line.text.lowercased().hasPrefix("/me ")
             let text = action ? String(dl.line.text.dropFirst(4)) : dl.line.text
-            let continued = dl.previousNick?.lowercased() == dl.line.nick.lowercased()
+            let continued = dl.whisper == nil
+                && dl.previousNick?.lowercased() == dl.line.nick.lowercased()
 
             if continued {
-                out.append(ChatText.plain("> ", UIColor.white.withAlphaComponent(0.35)))
+                out.append(ChatText.plain("> ", .tertiaryLabel))
             } else {
+                if dl.whisper == .sent { out.append(ChatText.plain("to ", .secondaryLabel)) }
                 for url in dl.style.badges {
                     if let img = emotes.badge(url) {
                         out.append(ChatText.attachment(img, height: ChatText.size * 1.15))
@@ -35,16 +37,19 @@ enum ChatFormat {
                            : ChatText.plain(dl.line.nick,
                                             ChatText.uiColor(hex: dl.style.colorHex),
                                             bold: true))
-                out.append(ChatText.plain(action ? " " : ": ",
-                                          UIColor.white.withAlphaComponent(0.6)))
+                out.append(ChatText.plain(dl.whisper == .received ? " whispered: " : action ? " " : ": ",
+                                          .secondaryLabel))
             }
+            // Everything up to the message opens the user card when tapped.
+            out.addAttribute(.chatUser, value: dl.line.nick,
+                             range: NSRange(location: 0, length: out.length))
 
             let words = text.split(separator: " ", omittingEmptySubsequences: true)
                 .map(String.init)
             // Greentext is a perk: subscribers and staff only, as on the site.
             let green = text.hasPrefix(">")
                 && !Set(dl.line.features).isDisjoint(with: ["subscriber", "moderator", "protected", "admin"])
-            let textColor = green ? ChatText.greentext : UIColor.white
+            let textColor = green ? ChatText.greentext : UIColor.label
             // Every emote in the message at once: how each is drawn can depend
             // on the others beside it.
             var looks = emotes.looks(EmoteContext(

@@ -10,7 +10,10 @@ DGG is still in development, and there are no builds to install yet.
 - Kick and Twitch streams play natively, and YouTube embeds play in the app too
 - Low delay on Kick, adjustable in Settings
 - Live chat with animated emotes, combos, flairs and greentext
-- Post in chat with emote suggestions as you type, and vote in polls
+- Post in chat with emote suggestions as you type, whisper, and vote in polls
+- Tap a name to stalk, highlight, whisper, ignore or open their logs
+- Mentions highlight the way they do on the site
+- Follows your phone's light or dark mode
 - Swipe the video to switch embeds, and turn the phone sideways for video beside chat
 
 ## Signing In
@@ -18,7 +21,7 @@ DGG is still in development, and there are no builds to install yet.
 1. On destiny.gg, go to Profile, then Developer, and click **Create Login Key**
 2. In the app, tap the gear, then paste the key under **Account**
 
-The key stays in your iPhone's Keychain and is only sent to destiny.gg chat. Treat it like a password.
+The key stays in your iPhone's Keychain and is only sent to destiny.gg. Treat it like a password.
 
 ## Development
 

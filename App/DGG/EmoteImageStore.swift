@@ -17,6 +17,7 @@ final class EmoteImageStore {
 
     private var names: Set<String> = []
     private var badges: [String: UIImage] = [:]
+    @ObservationIgnored private var previews: [String: EmoteLook] = [:]
     private var inFlight: Set<String> = []
     private var assets: [String: EmoteAsset] = [:]
     private var waiting: [String: [(EmoteAsset) -> Void]] = [:]
@@ -34,6 +35,14 @@ final class EmoteImageStore {
     func isEmote(_ token: String) -> Bool { names.contains(token) }
 
     var allPrefixes: Set<String> { names }
+
+    /// How one emote looks by itself, for the suggestions above the keyboard.
+    func preview(_ name: String) -> EmoteLook? {
+        if let hit = previews[name] { return hit }
+        let look = looks(EmoteContext(username: "", emotes: [name])).first
+        previews[name] = look
+        return look
+    }
 
     func looks(_ context: EmoteContext) -> [EmoteLook] {
         sheet?.looks(for: context) ?? []

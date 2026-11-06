@@ -221,6 +221,13 @@ public final class ChatClient: NSObject, @unchecked Sendable {
         task?.send(.string("MSG \(json)")) { _ in }
     }
 
+    /// A private message. Only ever called from the send button.
+    public func whisper(to nick: String, message: String) {
+        guard let body = try? JSONSerialization.data(withJSONObject: ["nick": nick, "data": message]),
+              let json = String(data: body, encoding: .utf8) else { return }
+        task?.send(.string("PRIVMSG \(json)")) { _ in }
+    }
+
     /// iOS freezes the app in the background, so a socket can come back dead with
     /// nothing to say so. Waiting for the watchdog would leave chat stuck for 45s.
     public func reconnectIfStale(after quiet: TimeInterval = 8) {
