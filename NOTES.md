@@ -123,6 +123,11 @@ Until then, CarPlay's own Now Playing screen should work for any app playing aud
 
 ## Posting
 
+Sending is a one second hold on the button by default, with a ring that closes as it
+counts, because the keyboard's own send key got pressed by accident. Return does nothing
+now. iOS always keeps a key in that corner, so it's a plain grey one. Hold to send can be
+turned off in Settings.
+
 `ChatClient.send(message:)` sends `MSG {"data": ...}`, and is only called from the
 send button. Chat refuses a message with `ERR`, which shows above the message box.
 The reason strings in `showNotice` are from memory of the site's client and have not

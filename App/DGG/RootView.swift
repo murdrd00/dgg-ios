@@ -395,6 +395,77 @@ struct PollCard: View {
     }
 }
 
+/// Send, held rather than tapped. A ring starts the moment the finger lands and
+/// sends when it closes, and letting go before that takes it back.
+struct HoldToSend: View {
+    var action: () -> Void
+
+    private static let hold: Double = 1
+    /// Sliding this far away from the button counts as changing your mind.
+    private static let slack: CGFloat = 44
+
+    @State private var progress: CGFloat = 0
+    @State private var holding = false
+    @State private var pending: Task<Void, Never>?
+
+    var body: some View {
+        ZStack {
+            Circle().stroke(Color.primary.opacity(0.14), lineWidth: 3)
+                .opacity(holding ? 1 : 0)
+            Circle().trim(from: 0, to: progress)
+                .stroke(.tint, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Image(systemName: "arrow.up.circle.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(.tint)
+                .scaleEffect(holding ? 0.84 : 1)
+        }
+        .frame(width: 38, height: 38)
+        .contentShape(.circle)
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    let moved = hypot(value.translation.width, value.translation.height)
+                    if moved > Self.slack {
+                        cancel()
+                    } else if !holding, moved < 1 {
+                        begin()
+                    }
+                }
+                .onEnded { _ in cancel() })
+        .accessibilityElement()
+        .accessibilityLabel("Send")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { action() }
+    }
+
+    private func begin() {
+        holding = true
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        withAnimation(.linear(duration: Self.hold)) { progress = 1 }
+        pending = Task {
+            try? await Task.sleep(for: .seconds(Self.hold))
+            guard !Task.isCancelled else { return }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            action()
+            reset()
+        }
+    }
+
+    private func cancel() {
+        pending?.cancel()
+        pending = nil
+        reset()
+    }
+
+    private func reset() {
+        withAnimation(.easeOut(duration: 0.18)) {
+            holding = false
+            progress = 0
+        }
+    }
+}
+
 /// The message box, with emotes offered as you type.
 struct Composer: View {
     var vm: BigscreenViewModel
@@ -474,12 +545,13 @@ struct Composer: View {
                 .font(.subheadline)
                 .focused($typing)
                 .textInputAutocapitalization(.sentences)
-                .submitLabel(.send)
+                // A plain grey key that does nothing. It sits right where a thumb
+                // lands, so a big blue send key there posted things by accident.
+                .submitLabel(.return)
                 .onChange(of: draft) { _, new in
-                    // Return sends, which a multi-line field reports as a newline.
+                    // Chat messages are one line, so return is simply dropped.
                     if new.contains("\n") {
                         draft = new.replacingOccurrences(of: "\n", with: "")
-                        send()
                     } else if new.count > Self.longest {
                         draft = String(new.prefix(Self.longest))
                     }
@@ -487,8 +559,12 @@ struct Composer: View {
                 .padding(.horizontal, 12).padding(.vertical, 8)
                 .background(Color.raised, in: .rect(cornerRadius: 18))
             if !draft.isEmpty {
-                Button(action: send) {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
+                if vm.holdToSend {
+                    HoldToSend(action: send)
+                } else {
+                    Button(action: send) {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
+                    }
                 }
             }
         }
@@ -554,6 +630,7 @@ struct SettingsView: View {
                         Stepper("\(Int(vm.chatFontSize))", value: $vm.chatFontSize, in: 12...22)
                     }
                     Toggle("Darken other embeds' chat", isOn: $vm.darkensOtherEmbeds)
+                    Toggle("Hold to send", isOn: $vm.holdToSend)
                 }
 
                 Section {

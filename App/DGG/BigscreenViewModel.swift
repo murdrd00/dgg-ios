@@ -262,6 +262,10 @@ final class BigscreenViewModel {
         didSet { Saved.store(latencyCorner.rawValue, "latencyCorner") }
     }
 
+    /// Sending takes a one second hold, so a stray tap can't post.
+    var holdToSend: Bool = Saved.value("holdToSend", true) {
+        didSet { Saved.store(holdToSend, "holdToSend") }
+    }
     var latencyShown: Bool = Saved.value("latencyShown", false) {
         didSet { Saved.store(latencyShown, "latencyShown") }
     }
