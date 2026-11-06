@@ -147,6 +147,8 @@ environment values only exist in Debug builds, except the first two:
 | `DGG_TEST_SIGNED_IN` | Shows the message box. What's sent only appears locally |
 | `DGG_TEST_POLL` | Plays a made-up poll, and its votes go nowhere |
 | `DGG_TEST_YOUTUBE=<id>` | Opens that video |
+| `DGG_STAGE=<image>` | README screenshots: that picture and sample chat, with no connection to chat |
+| `DGG_STAGE_AUDIO`, `DGG_STAGE_POLL` | Add audio only and a sample poll to the above |
 
 Pass them to `simctl launch` with a `SIMCTL_CHILD_` prefix. A real poll that starts during
 a test replaces the made-up one.

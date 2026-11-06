@@ -79,6 +79,9 @@ struct RootView: View {
             #endif
             await emotes.load()
             vm.emotePrefixes = emotes.allPrefixes
+            #if DEBUG
+            vm.stageChat()
+            #endif
         }
         .onReceive(rank) { _ in vm.tick() }
         .onReceive(liveness) { _ in vm.refreshLiveness() }

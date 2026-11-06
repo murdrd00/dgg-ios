@@ -104,6 +104,11 @@ struct PlayerArea: View {
                     .opacity(vm.fadingOut == i ? 0 : 1)
                     .zIndex(i == vm.top ? 1 : 0)
             }
+            #if DEBUG
+            if let poster = vm.stagePoster {
+                Image(uiImage: poster).resizable().scaledToFill().zIndex(3)
+            }
+            #endif
             if vm.pipActive {
                 Label("Playing in Picture in Picture", systemImage: "pip")
                     .font(.footnote).foregroundStyle(.white.opacity(0.7)).zIndex(2)

@@ -917,6 +917,12 @@ final class BigscreenViewModel {
             player.replaceCurrentItem(with: AVPlayerItem(url: u))
             player.play()
         }
+        #if DEBUG
+        if stagePoster != nil {
+            setUpStage()
+            return
+        }
+        #endif
         connectChat()
         feedTask = Task { [weak self, embedFeed] in
             for await items in embedFeed.updates() {
@@ -1152,6 +1158,9 @@ final class BigscreenViewModel {
 
     private var lastRank = Date.distantPast
     private func refreshEmbeds() {
+        #if DEBUG
+        if stagePoster != nil { return }
+        #endif
         // Re-ranking on every message would be wasteful at 400/min.
         guard Date().timeIntervalSince(lastRank) > 2 else { return }
         lastRank = Date()
@@ -1242,6 +1251,66 @@ final class BigscreenViewModel {
     }
 
     #if DEBUG
+    /// Dev hook for README screenshots: `DGG_STAGE=<image>` shows that picture and
+    /// sample chat, with no connection to chat at all, so no real people appear.
+    let stagePoster = ProcessInfo.processInfo.environment["DGG_STAGE"].flatMap(UIImage.init(contentsOfFile:))
+
+    private func setUpStage() {
+        let destiny = EmbedRef(platform: .kick, path: "destiny")
+        let others = [EmbedRef(platform: .kick, path: "anythingelse"),
+                      EmbedRef(platform: .kick, path: "dggjams")]
+        channelNames = [destiny.token: "Destiny", others[0].token: "anythingelse", others[1].token: "dggJams"]
+        embeds = [EmbedTracker.Entry(ref: destiny, viewers: 69_400),
+                  EmbedTracker.Entry(ref: others[0], viewers: 636),
+                  EmbedTracker.Entry(ref: others[1], viewers: 3)]
+        selected = destiny
+        link = .live
+        viewerCount = 1_739
+        pretendToSignIn(as: "nightowl")
+        let env = ProcessInfo.processInfo.environment
+        if env["DGG_STAGE_AUDIO"] != nil { audioOnly = true }
+        Task { @MainActor [weak self] in
+            await FlairCatalog.shared.load()
+            guard let self else { return }
+            self.flairs = await FlairCatalog.shared.snapshot()
+            self.isPlaying = true
+            guard env["DGG_STAGE_POLL"] != nil else { return }
+            self.fakePoll = true
+            let clock = DateFormatter()
+            clock.locale = Locale(identifier: "en_US_POSIX")
+            clock.timeZone = TimeZone(secondsFromGMT: 0)
+            clock.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZ"
+            let now = clock.string(from: Date())
+            let frame = """
+            POLLSTART {"canvote":true,"myvote":0,"nick":"Bot","weighted":false,"hidden":false,\
+            "start":"\(now)","now":"\(now)","time":60000,"question":"Where are you watching?",\
+            "options":["Apple TV","iPhone","The website"],"totals":[64,27,9],"totalvotes":100}
+            """
+            if let event = FrameParser.parse(frame) { await self.handle(event) }
+        }
+    }
+
+    func stageChat() {
+        guard stagePoster != nil else { return }
+        let lines: [(String, [String], String)] = [
+            ("bluecheese", ["flair13"], "watching this on my phone DankWave"),
+            ("lurker", ["flair127", "flair13"], "wait this is native?? OOOO"),
+            ("sidequest", [], "AngelThump AngelThump"),
+            ("porchlight", ["flair1"], "swiping the video feels so good"),
+            ("halfdome", ["flair127", "flair3"], "way less delay than the website"),
+            ("sofaking", ["flair13", "subscriber"], ">still using the website"),
+            ("chatter42", [], "nightowl are you on the app yet DinkDonk"),
+            ("couchpotato", ["flair8"], "just signed in DankWave"),
+            ("livingroom", ["flair127"], "chat fits so well FISHIES"),
+            ("remotecontrol", ["flair42"], "emotes even animate OOOO"),
+        ]
+        for (nick, features, text) in lines { injectTestLine(text, nick: nick, features: features) }
+        for i in 0..<12 { injectTestLine("AngelThump", nick: "viewer\(i)") }
+        injectTestLine("posting this from the app AngelThump", nick: "nightowl", features: ["flair13"])
+        injectTestLine("best seat in the house CINEMA", nick: "sidequest")
+        injectTestLine("audio only in the car DankWave", nick: "bluecheese", features: ["flair13"])
+    }
+
     /// Dev hook: shows the message box with no account. What's typed only appears
     /// locally, and never reaches chat.
     private var pretendSignedIn = false
@@ -1417,6 +1486,9 @@ final class BigscreenViewModel {
     /// Loads into the hidden player. What's on screen stays until this is
     /// actually running, and only a failure leaves nothing to show.
     private func load(_ ref: EmbedRef, quality: Double) {
+        #if DEBUG
+        if stagePoster != nil { return }
+        #endif
         selected = ref
         playerError = nil
         wantsQuality = quality
