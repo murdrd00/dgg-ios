@@ -1,6 +1,6 @@
 name: DGG
 options:
-  bundleIdPrefix: gg.destiny.ios
+  bundleIdPrefix: com.murdrd
   deploymentTarget:
     iOS: "26.0"
 packages:

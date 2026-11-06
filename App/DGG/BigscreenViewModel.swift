@@ -47,7 +47,7 @@ enum ChatItem: Identifiable {
 private enum LoginKey {
     private static let query: [String: Any] = [
         kSecClass as String: kSecClassGenericPassword,
-        kSecAttrService as String: "gg.destiny.ios.loginkey",
+        kSecAttrService as String: "com.murdrd.dgg.loginkey",
     ]
 
     static func load() -> String? {

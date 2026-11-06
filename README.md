@@ -1,5 +1,7 @@
 # DGG: Destiny.gg on iPhone
 
+An unofficial fan project, not affiliated with destiny.gg.
+
 A native iOS app for [destiny.gg](https://www.destiny.gg). It shows the Big Screen embed list, plays streams, and runs live chat, in place of a home screen link to the site.
 
 DGG is still in development, and there are no builds to install yet. For Apple TV, see [DGGTV](https://github.com/murdrd00/dgg-tv).
