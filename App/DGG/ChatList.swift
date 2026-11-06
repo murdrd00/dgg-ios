@@ -69,7 +69,7 @@ final class ChatCell: UITableViewCell {
 }
 
 @MainActor
-final class ChatListController: UIViewController, UITableViewDelegate {
+final class ChatListController: UIViewController, UITableViewDelegate, UIGestureRecognizerDelegate {
 
     static let inset: CGFloat = 12
     private static let rowGap: CGFloat = 5
@@ -91,6 +91,9 @@ final class ChatListController: UIViewController, UITableViewDelegate {
     /// False once a finger has taken chat back. New lines then wait in the model,
     /// so what's being read holds still.
     private var following = true
+    /// A finger is on chat. Lines wait from the moment it lands, not once it starts
+    /// to drag, or a link in fast chat would move out from under the tap.
+    private var touching = false
     private var layoutWidth: CGFloat = 0
     private var generation = -1
     private var fontSize = 0.0
@@ -131,6 +134,12 @@ final class ChatListController: UIViewController, UITableViewDelegate {
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         tap.cancelsTouchesInView = false
         table.addGestureRecognizer(tap)
+
+        let hold = UILongPressGestureRecognizer(target: self, action: #selector(held))
+        hold.minimumPressDuration = 0
+        hold.cancelsTouchesInView = false
+        hold.delegate = self
+        table.addGestureRecognizer(hold)
 
         jump.configuration?.cornerStyle = .capsule
         jump.configuration?.baseBackgroundColor = UIColor(white: 0.16, alpha: 0.95)
@@ -181,7 +190,7 @@ final class ChatListController: UIViewController, UITableViewDelegate {
     // MARK: - Updates
 
     private func tick() {
-        if following { vm.flush() }
+        if following, !touching { vm.flush() }
         if generation != emotes.generation || fontSize != vm.chatFontSize {
             generation = emotes.generation
             fontSize = vm.chatFontSize
@@ -313,6 +322,14 @@ final class ChatListController: UIViewController, UITableViewDelegate {
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         if atBottom { resume() }
     }
+
+    @objc private func held(_ hold: UILongPressGestureRecognizer) {
+        touching = hold.state == .began || hold.state == .changed
+    }
+
+    /// It only watches, so scrolling and tapping carry on as normal.
+    func gestureRecognizer(_ g: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
         let p = tap.location(in: table)

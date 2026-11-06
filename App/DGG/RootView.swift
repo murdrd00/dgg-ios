@@ -11,7 +11,10 @@ struct DGGApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView().preferredColorScheme(.dark)
+            RootView()
+                .preferredColorScheme(.dark)
+                // The light blue from the icon. The default reads too dark here.
+                .tint(Color(red: 0.36, green: 0.68, blue: 0.95))
         }
     }
 }
@@ -33,11 +36,13 @@ struct RootView: View {
             let layout = landscape ? AnyLayout(HStackLayout(spacing: 0))
                                    : AnyLayout(VStackLayout(spacing: 0))
             layout {
-                if vm.selected != nil {
+                // `streamURL` alone means the test stream hook, with nothing selected.
+                if vm.selected != nil || vm.streamURL != nil {
                     PlayerArea(vm: vm, landscape: landscape, chatShown: $chatShown, onClose: close)
                         .aspectRatio(landscape ? nil : 16 / 9, contentMode: .fit)
                         .frame(maxWidth: .infinity, maxHeight: landscape ? .infinity : nil)
-                        .ignoresSafeArea(.container, edges: landscape ? .all : [])
+                        // Up to the screen edge, past the island, in landscape.
+                        .ignoresSafeArea(.container, edges: landscape ? [.leading, .vertical] : [])
                 }
                 if !landscape || chatShown || vm.selected == nil {
                     chatColumn
@@ -49,6 +54,9 @@ struct RootView: View {
         .task {
             ChatText.size = vm.chatFontSize
             vm.start()
+            #if DEBUG
+            runTestHooks()
+            #endif
             await emotes.load()
             vm.emotePrefixes = emotes.allPrefixes
         }
@@ -82,6 +90,15 @@ struct RootView: View {
             Composer(vm: vm, emotes: emotes, onSignIn: { showSettings = true })
         }
     }
+
+    #if DEBUG
+    private func runTestHooks() {
+        let env = ProcessInfo.processInfo.environment
+        if env["DGG_TEST_SIGNED_IN"] != nil { vm.pretendToSignIn() }
+        if env["DGG_TEST_POLL"] != nil { vm.runFakePoll() }
+        if let id = env["DGG_TEST_YOUTUBE"] { watch(EmbedRef(platform: .youtube, path: id)) }
+    }
+    #endif
 
     private func watch(_ ref: EmbedRef) {
         vm.isWatching = true
@@ -131,13 +148,13 @@ struct EmbedStrip: View {
             }
             if vm.pinIsHidden {
                 Button { vm.togglePin() } label: {
-                    Image(systemName: "pin").foregroundStyle(.secondary)
+                    Image(systemName: "pin").foregroundStyle(.white.opacity(0.65))
                 }
             }
             Circle().fill(vm.connected ? .green : .orange).frame(width: 7, height: 7)
             Button(action: onSettings) {
                 Image(systemName: "gearshape.fill")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.65))
                     .frame(width: 34, height: 34)
             }
             .padding(.trailing, 4)
@@ -166,31 +183,53 @@ struct EmbedStrip: View {
     }
 }
 
-/// Tap to hide, as the site's close button does.
+private struct PinHeight: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// Tap to read the whole pin, and the cross hides it, as on the site.
 struct PinCard: View {
     let pin: DisplayLine
     var vm: BigscreenViewModel
     var emotes: EmoteImageStore
     /// The same text object each redraw, or its emotes would restart.
     @State private var cache = LineCache()
+    @State private var open = false
+    @State private var fullHeight: CGFloat = 0
+
+    private var collapsed: CGFloat { vm.chatFontSize * 3.3 }
+
+    private var text: NSAttributedString {
+        cache.string(id: pin.id, generation: emotes.generation, size: vm.chatFontSize) {
+            ChatFormat.attributed(.message(pin), emotes: emotes)
+        }
+    }
 
     var body: some View {
         GeometryReader { box in
-            ChatLineLabel(
-                attributed: cache.string(id: pin.id, generation: emotes.generation,
-                                         size: vm.chatFontSize) {
-                    ChatFormat.attributed(.message(pin), emotes: emotes)
-                },
-                width: box.size.width)
+            let full = ceil(text.boundingRect(
+                with: CGSize(width: box.size.width, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin], context: nil).height)
+            ChatLineLabel(attributed: text, width: box.size.width)
+                .preference(key: PinHeight.self, value: full)
         }
-        .frame(height: vm.chatFontSize * 3.3)
+        .onPreferenceChange(PinHeight.self) { fullHeight = $0 }
+        .frame(height: open ? max(collapsed, fullHeight) : min(collapsed, max(fullHeight, 1)))
         .clipped()
         .padding(.horizontal, 12).padding(.vertical, 6)
+        .padding(.trailing, 18)
         .background(Color.white.opacity(0.07))
+        .contentShape(.rect)
+        // A long pin was cut off with no way to read the rest.
+        .onTapGesture {
+            guard fullHeight > collapsed else { return }
+            withAnimation(.snappy(duration: 0.25)) { open.toggle() }
+        }
         .overlay(alignment: .topTrailing) {
             Button { vm.togglePin() } label: {
                 Image(systemName: "xmark").font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary).padding(8)
+                    .foregroundStyle(.white.opacity(0.65)).padding(8)
             }
         }
     }
@@ -198,6 +237,8 @@ struct PinCard: View {
 
 struct PollCard: View {
     var vm: BigscreenViewModel
+    private static let rowHeight: CGFloat = 32
+    private static let gap: CGFloat = 5
 
     var body: some View {
         if let poll = vm.poll {
@@ -212,7 +253,16 @@ struct PollCard: View {
                             .font(.caption).monospacedDigit().foregroundStyle(.secondary)
                     }
                 }
-                ForEach(poll.options.indices, id: \.self) { row($0, poll) }
+                // A long poll scrolls, or under the video it would leave no
+                // room for chat. Half a row showing says there's more.
+                ScrollView {
+                    VStack(spacing: Self.gap) {
+                        ForEach(poll.options.indices, id: \.self) { row($0, poll) }
+                    }
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .scrollIndicators(.hidden)
+                .frame(height: min(Double(poll.options.count), 3.5) * (Self.rowHeight + Self.gap) - Self.gap)
             }
             .padding(10)
             .background(Color.white.opacity(0.07))
@@ -231,7 +281,7 @@ struct PollCard: View {
             }
             .font(.footnote)
             .foregroundStyle(.white)
-            .padding(.horizontal, 10).frame(height: 32)
+            .padding(.horizontal, 10).frame(height: Self.rowHeight)
             .background {
                 GeometryReader { box in
                     ZStack(alignment: .leading) {
@@ -269,7 +319,8 @@ struct Composer: View {
         let start = lastWord.lowercased()
         return emotes.allPrefixes
             .filter { $0.lowercased().hasPrefix(start) && $0 != lastWord }
-            .sorted().prefix(12).map { $0 }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .prefix(12).map { $0 }
     }
 
     var body: some View {
@@ -297,7 +348,7 @@ struct Composer: View {
             } else {
                 Button(action: onSignIn) {
                     Text(vm.hasLoginKey ? vm.accountLabel : "Sign in to chat")
-                        .font(.footnote).foregroundStyle(.secondary)
+                        .font(.footnote.weight(.medium))
                         .frame(maxWidth: .infinity).frame(height: 38)
                 }
             }
@@ -357,7 +408,7 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
-                    LabeledContent("Account", value: vm.accountLabel)
+                    LabeledContent("Signed in as", value: vm.accountLabel)
                     if vm.hasLoginKey {
                         Button("Sign out", role: .destructive) { vm.setLoginKey(nil) }
                     } else {

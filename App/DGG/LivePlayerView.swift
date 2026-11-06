@@ -19,6 +19,16 @@ struct LivePlayerView: UIViewRepresentable {
         var onDisplayReady: (Bool) -> Void = { _ in }
         private var readyObserver: NSKeyValueObservation?
 
+        /// AVPlayer picks its quality to suit the layer, going by this scale. Left
+        /// alone it counts points as pixels, so a phone got a third of the
+        /// resolution its screen can show, and a soft picture.
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            guard let scale = window?.screen.scale else { return }
+            contentScaleFactor = scale
+            playerLayer.contentsScale = scale
+        }
+
         func watchReadiness() {
             readyObserver = playerLayer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] l, _ in
                 let ready = l.isReadyForDisplay

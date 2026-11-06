@@ -396,7 +396,12 @@ final class BigscreenViewModel {
 
     func setDisplayReady(_ ready: Bool, player index: Int) {
         displayReady[index] = ready
+        if ready, index == active { noPicture = false }
     }
+
+    /// Playing, but with no frame to show after a fair wait. Sound may still be
+    /// coming through, so this says so rather than leaving a silent black box.
+    private(set) var noPicture = false
     var player: AVPlayer { players[active] }
     private var standby: AVPlayer { players[1 - active] }
 
@@ -789,6 +794,9 @@ final class BigscreenViewModel {
         case .connected:
             link = .live
         case .me(let nick):
+            #if DEBUG
+            if pretendSignedIn { break }
+            #endif
             accountName = nick
             accountChecked = true
 
@@ -865,8 +873,12 @@ final class BigscreenViewModel {
             for l in old { tracker.observe(l) }
             // A phone reconnects every time it comes back from the background,
             // and each time the server replays lines already on screen.
-            let seen = Set(lines.map { Self.fingerprint($0.line) })
-            append(old.filter { !seen.contains(Self.fingerprint($0)) }.map(display))
+            // Lines waiting while chat is scrolled back count as seen too.
+            let seen = Set((lines + pending).map { Self.fingerprint($0.line) })
+            let fresh = old.filter { !seen.contains(Self.fingerprint($0)) }.map(display)
+            // Anything new queues like any other line, so it can't move what's
+            // being read. Only an empty chat takes it straight away.
+            if lines.isEmpty { append(fresh) } else { pending.append(contentsOf: fresh) }
             refreshEmbeds()
 
         case .userUpdate(let u):
@@ -996,8 +1008,25 @@ final class BigscreenViewModel {
     func send(_ text: String) {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty, accountName != nil else { return }
+        #if DEBUG
+        if pretendSignedIn {
+            injectTestLine(clean, nick: "TEST")
+            return
+        }
+        #endif
         client.send(message: clean)
     }
+
+    #if DEBUG
+    /// Dev hook: shows the message box with no account. What's typed only appears
+    /// locally, and never reaches chat.
+    private var pretendSignedIn = false
+
+    func pretendToSignIn() {
+        pretendSignedIn = true
+        accountName = "TEST"
+    }
+    #endif
 
     /// Back from the background, where the socket may have died unnoticed.
     func foregrounded() {
@@ -1222,7 +1251,9 @@ final class BigscreenViewModel {
                     fail("no picture")
                 } else {
                     if lowLatency { liveEdge.follow(item, on: next) } else { liveEdge.stop() }
+                    let framed = displayReady[nextIndex]
                     reveal(ref, url: url, id: id)
+                    noPicture = !framed
                 }
             } catch {
                 guard id == loadID else { return }

@@ -7,12 +7,38 @@ different on a phone.
 
 ## Status
 
-Builds for the iOS Simulator and for devices. **It has not been launched yet**, on
-either: every screen below is untested, so expect layout fixes on first run. The chat
-client changes were tested against live chat from the command line, read-only.
+Runs in the iPhone 18 Pro simulator, on iOS 27.2. Checked there, against live chat:
+chat, flairs, rainbow names, animated emotes, combos, the pin, a real poll, the embed
+pills, swiping the video, scrolling back, landscape, Settings, text size, YouTube in the
+app, the message box with its suggestions, and tapping a link.
+
+**Not yet run on a real iPhone**, so these are still unknown: Kick and Twitch picture
+(see below), real posting, scrolling smoothness and battery. Posting and voting have
+only run through the test hooks, which never reach chat.
 
 Not built yet: Picture in Picture and audio in the background. Leaving the app stops
 the stream, as on TV.
+
+## Video in the simulator
+
+Kick and Twitch look broken in the iOS Simulator and this is not the app. The picture
+shows a soft or frozen frame, or goes black, with thousands of `err=-8969` (bad data)
+from `VTDecompression` in the log. The simulator decodes in software and it chokes on
+these streams:
+
+| Test | Result |
+|---|---|
+| Twitch through AVPlayer on a Mac | 1080p, 54 fps, no errors |
+| Kick, plain, on a Mac | 1080p, 57 fps, no errors |
+| Kick through `LiveLoader`, on a Mac | 1080p, 58 fps, no errors |
+| Apple's bipbop stream in the iPhone simulator | 960x720, moving, no bad data errors |
+
+So don't chase this in the simulator. Judge video on a phone. If a stream gives no frame
+within 15 seconds, the player says so rather than sitting there black.
+
+`AVPlayerLayer` needs its scale set by hand. AVPlayer picks quality to suit the layer
+and it was reporting 402x226, which is points, on a 1206x678 picture. That's what
+`Surface.didMoveToWindow` is for. `primaryVideoOutputSize` in the log shows the value.
 
 ## Performance
 
@@ -28,6 +54,12 @@ than a SwiftUI list.
 - `URLCache` is raised to 256 MB, or emotes would download again on every launch.
 - Nothing plays until a stream is picked, which also saves mobile data.
 
+With chat running and no video, the simulator measured 0.3-3.6% CPU in a Debug build.
+That's a sanity check rather than a phone figure.
+
+Chat stops taking new lines the moment a finger lands on it, not when a drag starts.
+Otherwise a link in fast chat moves out from under the tap.
+
 Still worth measuring on a phone: rows use a `UITextView`, which is heavy. If scrolling
 drops frames, drawing text into a plain layer is the next step.
 
@@ -39,9 +71,11 @@ nothing has arrived for 8 seconds, and takes about 0.1s against live chat. It sk
 backoff on purpose. Going through `noteDisconnect` took 4.4s, because the dead socket's
 last callback started a second backoff.
 
-The server replays its last 150 lines on every connect, so `.history` drops lines
-already on screen, matched on nick, time and text. Replayed lines get new ids, so ids
-can't be used for this.
+The server replays its last 150 lines on every connect, so `.history` drops lines it
+already has, on screen or waiting, matched on nick, time and text. Replayed lines get new
+ids, so ids can't be used for this. Anything new queues like a normal line, so a
+reconnect can't move what's being read. The simulator doesn't freeze sockets, so this
+path has been tested against live chat from the command line but not seen in the app.
 
 ## Posting
 
@@ -59,5 +93,16 @@ swiping the video doesn't switch embeds there. Use the pills instead.
 
 ## Testing without a device
 
-`xcrun simctl` needs the iOS runtime: `xcodebuild -downloadPlatform iOS`.
-`DGGTV_TEST_STREAM=<url>` and `DGGTV_SILENT` still work as launch environment values.
+The simulator needs the iOS runtime: `xcodebuild -downloadPlatform iOS`. These launch
+environment values only exist in Debug builds, except the first two:
+
+| Value | Does |
+|---|---|
+| `DGGTV_TEST_STREAM=<url>` | Plays a known-good stream |
+| `DGGTV_SILENT` | No sound |
+| `DGG_TEST_SIGNED_IN` | Shows the message box. What's sent only appears locally |
+| `DGG_TEST_POLL` | Plays a made-up poll, and its votes go nowhere |
+| `DGG_TEST_YOUTUBE=<id>` | Opens that video |
+
+Pass them to `simctl launch` with a `SIMCTL_CHILD_` prefix. A real poll that starts during
+a test replaces the made-up one.

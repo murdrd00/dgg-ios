@@ -78,6 +78,8 @@ struct PlayerArea: View {
             }
             if let error = vm.playerError {
                 errorCard(error)
+            } else if vm.noPicture, !isYouTube {
+                errorCard("No picture from this stream yet.")
             }
             // YouTube's player takes taps for itself, so one couldn't bring
             // these back. It keeps them up.
