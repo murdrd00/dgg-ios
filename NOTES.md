@@ -7,17 +7,11 @@ different on a phone.
 
 ## Status
 
-Runs in the iPhone 18 Pro simulator, on iOS 27.2. Checked there, against live chat:
-chat, flairs, rainbow names, animated emotes, combos, the pin, a real poll, the embed
-pills, swiping the video, scrolling back, landscape, Settings, text size, YouTube in the
-app, the message box with its suggestions, and tapping a link.
+Runs on an iPhone 14 Pro as well as the simulator. Posting, audio in the background and
+the lock screen controls have all been used on the phone. Still unconfirmed: whispers,
+Stalk with a real Login Key, and how scrolling and battery hold up over time.
 
-**Not yet run on a real iPhone**, so these are still unknown: Kick and Twitch picture
-(see below), real posting, scrolling smoothness and battery. Posting and voting have
-only run through the test hooks, which never reach chat.
-
-Picture in Picture has only been built, not seen working: the button doesn't appear in
-the simulator, so it needs a phone.
+CarPlay isn't built, though the showcase image includes it. See below.
 
 ## Video in the simulator
 
