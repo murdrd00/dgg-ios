@@ -272,6 +272,8 @@ final class BigscreenViewModel {
     var audioOnly: Bool = Saved.value("audioOnly", false) {
         didSet {
             Saved.store(audioOnly, "audioOnly")
+            // Whatever was true of the picture before, it starts afresh now.
+            noPicture = false
             applyQuality()
         }
     }
