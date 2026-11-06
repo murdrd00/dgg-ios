@@ -49,20 +49,24 @@ struct RootView: View {
     var body: some View {
         GeometryReader { box in
             let landscape = box.size.width > box.size.height
-            let layout = landscape ? AnyLayout(HStackLayout(spacing: 0))
-                                   : AnyLayout(VStackLayout(spacing: 0))
+            // Audio only has no picture to sit beside, so chat keeps the full width.
+            let sideBySide = landscape && !vm.audioMode
+            let layout = sideBySide ? AnyLayout(HStackLayout(spacing: 0))
+                                    : AnyLayout(VStackLayout(spacing: 0))
             layout {
                 // `streamURL` alone means the test stream hook, with nothing selected.
-                if vm.selected != nil || vm.streamURL != nil {
-                    PlayerArea(vm: vm, landscape: landscape, chatShown: $chatShown, onClose: close)
-                        .aspectRatio(landscape ? nil : 16 / 9, contentMode: .fit)
-                        .frame(maxWidth: .infinity, maxHeight: landscape ? .infinity : nil)
+                if vm.audioMode, vm.selected != nil {
+                    AudioBar(vm: vm, onClose: close)
+                } else if vm.selected != nil || vm.streamURL != nil {
+                    PlayerArea(vm: vm, landscape: sideBySide, chatShown: $chatShown, onClose: close)
+                        .aspectRatio(sideBySide ? nil : 16 / 9, contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: sideBySide ? .infinity : nil)
                         // Up to the screen edge, past the island, in landscape.
-                        .ignoresSafeArea(.container, edges: landscape ? [.leading, .vertical] : [])
+                        .ignoresSafeArea(.container, edges: sideBySide ? [.leading, .vertical] : [])
                 }
-                if !landscape || chatShown || vm.selected == nil {
+                if !sideBySide || chatShown || vm.selected == nil {
                     chatColumn
-                        .frame(width: landscape && vm.selected != nil ? min(320, box.size.width * 0.38) : nil)
+                        .frame(width: sideBySide && vm.selected != nil ? min(320, box.size.width * 0.38) : nil)
                 }
             }
         }
@@ -79,15 +83,15 @@ struct RootView: View {
         .onReceive(rank) { _ in vm.tick() }
         .onReceive(liveness) { _ in vm.refreshLiveness() }
         // YouTube plays in a web view, which the player state knows nothing about.
-        .onChange(of: vm.isPlaying || vm.selected?.platform == .youtube, initial: true) { _, on in
+        // Audio only leaves the phone free to lock, which saves the battery.
+        .onChange(of: (vm.isPlaying && !vm.audioMode) || vm.selected?.platform == .youtube,
+                  initial: true) { _, on in
             UIApplication.shared.isIdleTimerDisabled = on
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .background: vm.suspend()
-            case .active:
-                vm.foregrounded()
-                vm.resume()
+            case .background: vm.enteredBackground()
+            case .active:     vm.enteredForeground()
             default: break
             }
         }
@@ -283,22 +287,30 @@ struct PinCard: View {
 
 struct PollCard: View {
     var vm: BigscreenViewModel
-    private static let rowHeight: CGFloat = 32
-    private static let gap: CGFloat = 5
+    private static let rowHeight: CGFloat = 40
+    private static let gap: CGFloat = 6
+    // The site's `$color-darkred` and `$color-blue`.
+    private static let bar = Color(red: 0x85 / 255, green: 0, blue: 0)
+    private static let timer = Color(red: 0, green: 0x79 / 255, blue: 0xbf / 255)
 
     var body: some View {
-        if let poll = vm.poll {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text(poll.question).font(.subheadline.weight(.semibold))
-                    Spacer(minLength: 8)
-                    if poll.ended {
-                        Text("Ended").font(.caption).foregroundStyle(.secondary)
-                    } else if poll.ends > .now {
-                        Text(timerInterval: Date.now...poll.ends, countsDown: true)
-                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+        if let poll = vm.poll, !vm.pollDismissed {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text(poll.question).font(.subheadline.weight(.bold))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button { vm.pollDismissed = true } label: {
+                        Image(systemName: "xmark").font(.caption2.weight(.bold))
+                            .foregroundStyle(Color.primary.opacity(0.65))
+                            .frame(width: 22, height: 22)
                     }
                 }
+                HStack {
+                    Text(summary(poll)).lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text(poll.votes == 1 ? "1 vote" : "\(poll.votes.formatted()) votes").monospacedDigit()
+                }
+                .font(.caption).foregroundStyle(.secondary)
                 // A long poll scrolls, or under the video it would leave no
                 // room for chat. Half a row showing says there's more.
                 ScrollView {
@@ -308,40 +320,74 @@ struct PollCard: View {
                 }
                 .scrollBounceBehavior(.basedOnSize)
                 .scrollIndicators(.hidden)
-                .frame(height: min(Double(poll.options.count), 3.5) * (Self.rowHeight + Self.gap) - Self.gap)
+                .frame(height: min(Double(poll.options.count), 2.5) * (Self.rowHeight + Self.gap) - Self.gap)
+                if !poll.ended { timeLeft(poll) }
             }
             .padding(10)
             .background(Color.raised)
         }
     }
 
+    private func summary(_ poll: ChatPoll) -> String {
+        let kind = poll.weighted ? "Sub-weighted poll" : poll.hidden ? "Hidden poll" : "Poll"
+        guard !poll.ended else { return "\(kind) ended" }
+        let seconds = Int(poll.length.rounded())
+        return "\(kind) started by \(poll.startedBy) for \(seconds) second\(seconds == 1 ? "" : "s")."
+    }
+
+    /// Runs down with the clock. Its own small view, so only this redraws.
+    private func timeLeft(_ poll: ChatPoll) -> some View {
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let left = poll.ends.timeIntervalSince(context.date)
+            let share = poll.length > 0 ? min(1, max(0, left / poll.length)) : 0
+            GeometryReader { box in
+                Self.timer.frame(width: box.size.width * share)
+            }
+        }
+        .frame(height: 4)
+        .background(Color.primary.opacity(0.12))
+        .clipShape(.capsule)
+    }
+
+    private func winner(_ poll: ChatPoll) -> Int? {
+        guard poll.ended, !poll.hidden, let top = poll.totals.max(), top > 0 else { return nil }
+        return poll.totals.firstIndex(of: top)
+    }
+
     private func row(_ i: Int, _ poll: ChatPoll) -> some View {
         let share = poll.votes > 0 ? Double(poll.totals[i]) / Double(poll.votes) : 0
         let mine = poll.myVote == i + 1 || vm.sentVote == i + 1
+        let votes = poll.totals[i]
         return Button { vm.vote(i) } label: {
-            HStack(spacing: 6) {
-                if mine { Image(systemName: "checkmark").font(.caption) }
-                Text(poll.options[i]).lineLimit(1)
-                Spacer(minLength: 8)
-                if !poll.hidden { Text("\(Int((share * 100).rounded()))%").monospacedDigit() }
-            }
-            .font(.footnote)
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 10).frame(height: Self.rowHeight)
-            .background {
+            VStack(spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("\(i + 1)").font(.footnote.weight(.bold)).monospacedDigit()
+                    Text(poll.options[i]).font(.footnote.weight(.semibold)).lineLimit(1)
+                    if mine { Image(systemName: "checkmark").font(.caption2.weight(.bold)) }
+                    Spacer(minLength: 8)
+                    if !poll.hidden {
+                        Text("\(Int((share * 100).rounded()))% (\(votes.formatted()) vote\(votes == 1 ? "" : "s"))")
+                            .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
                 GeometryReader { box in
                     ZStack(alignment: .leading) {
-                        Color.raised
+                        Color.primary.opacity(0.12)
                         if !poll.hidden {
-                            Color.primary.opacity(0.18).frame(width: box.size.width * share)
+                            (winner(poll) == i ? Color.green.opacity(0.7) : Self.bar)
+                                .frame(width: box.size.width * share)
                         }
                     }
                 }
+                .frame(height: 8)
+                .clipShape(.capsule)
+                .animation(.easeOut(duration: 0.2), value: share)
             }
-            .clipShape(.rect(cornerRadius: 8))
-            .animation(.easeOut(duration: 0.2), value: share)
+            .frame(height: Self.rowHeight)
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .foregroundStyle(.primary)
         .disabled(!vm.pollTakesRemote)
     }
 }
@@ -510,6 +556,8 @@ struct SettingsView: View {
                 Section {
                     Toggle("Hide offline channels", isOn: $vm.hideOffline)
                     Toggle("Latency counter", isOn: $vm.latencyShown)
+                    Toggle("Keep playing in the background", isOn: $vm.backgroundAudio)
+                    Toggle("Picture in Picture on leaving", isOn: $vm.pipOnLeave)
                     LabeledContent("Low delay") {
                         Text(vm.liveCushion >= BigscreenViewModel.liveDelayOff
                              ? "Off" : "\(Int(vm.liveCushion))s buffer")

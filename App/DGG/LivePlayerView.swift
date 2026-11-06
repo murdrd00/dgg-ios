@@ -9,15 +9,49 @@ import AVKit
 struct LivePlayerView: UIViewRepresentable {
 
     let player: AVPlayer
+    /// The one on screen, and so the one Picture in Picture should take.
+    var isCurrent = true
+    /// Whether leaving the app should float the video by itself.
+    var pipOnLeave = false
+    /// Each increase toggles Picture in Picture on the current player.
+    var pipRequest = 0
+    var onPipChange: (Bool) -> Void = { _ in }
     /// Whether a frame is actually ready to show. "Playing" can come first,
     /// and swapping to a player at that point shows nothing.
     var onDisplayReady: (Bool) -> Void = { _ in }
 
-    final class Surface: UIView {
+    final class Surface: UIView, AVPictureInPictureControllerDelegate {
         override static var layerClass: AnyClass { AVPlayerLayer.self }
         var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
         var onDisplayReady: (Bool) -> Void = { _ in }
+        var onPipChange: (Bool) -> Void = { _ in }
+        var pip: AVPictureInPictureController?
+        var seenRequest = 0
         private var readyObserver: NSKeyValueObservation?
+
+        func setUpPip() {
+            guard AVPictureInPictureController.isPictureInPictureSupported() else { return }
+            let controller = AVPictureInPictureController(
+                contentSource: .init(playerLayer: playerLayer))
+            // Live: there's nowhere to seek to, so no skip buttons either.
+            controller.requiresLinearPlayback = true
+            controller.delegate = self
+            pip = controller
+        }
+
+        func pictureInPictureControllerWillStartPictureInPicture(_ c: AVPictureInPictureController) {
+            onPipChange(true)
+        }
+
+        func pictureInPictureControllerDidStopPictureInPicture(_ c: AVPictureInPictureController) {
+            onPipChange(false)
+        }
+
+        func pictureInPictureController(_ c: AVPictureInPictureController,
+                                        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler
+                                        completion: @escaping (Bool) -> Void) {
+            completion(true)
+        }
 
         /// AVPlayer picks its quality to suit the layer, going by this scale. Left
         /// alone it counts points as pixels, so a phone got a third of the
@@ -44,13 +78,26 @@ struct LivePlayerView: UIViewRepresentable {
         v.playerLayer.player = player
         v.playerLayer.videoGravity = .resizeAspect
         v.onDisplayReady = onDisplayReady
+        v.onPipChange = onPipChange
+        v.seenRequest = pipRequest
         v.watchReadiness()
+        v.setUpPip()
         return v
     }
 
     func updateUIView(_ v: Surface, context: Context) {
         if v.playerLayer.player !== player { v.playerLayer.player = player }
         v.onDisplayReady = onDisplayReady
+        v.onPipChange = onPipChange
+        v.pip?.canStartPictureInPictureAutomaticallyFromInline = isCurrent && pipOnLeave
+        guard v.seenRequest != pipRequest else { return }
+        v.seenRequest = pipRequest
+        guard isCurrent, let pip = v.pip else { return }
+        if pip.isPictureInPictureActive {
+            pip.stopPictureInPicture()
+        } else {
+            pip.startPictureInPicture()
+        }
     }
 }
 

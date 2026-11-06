@@ -26,6 +26,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         LSApplicationQueriesSchemes: [youtube]
+        UIBackgroundModes: [audio]
     settings:
       base:
         SWIFT_VERSION: "5.0"

@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AVKit
 import DGGKit
 
 /// YouTube can't be resolved to a stream on the device, but iOS has a web engine,
@@ -48,6 +49,7 @@ struct PlayerArea: View {
     @State private var drag: CGFloat = 0
     @State private var controls = true
     @State private var hideControls: Task<Void, Never>?
+    @State private var pipRequest = 0
 
     private static let toSwitch: CGFloat = 110
 
@@ -96,11 +98,16 @@ struct PlayerArea: View {
     private var picture: some View {
         ZStack {
             ForEach(0..<2, id: \.self) { i in
-                LivePlayerView(player: vm.players[i]) { vm.setDisplayReady($0, player: i) }
+                LivePlayerView(player: vm.players[i], isCurrent: i == vm.active,
+                               pipOnLeave: vm.pipOnLeave, pipRequest: pipRequest,
+                               onPipChange: { vm.pipActive = $0 }) { vm.setDisplayReady($0, player: i) }
                     .opacity(vm.fadingOut == i ? 0 : 1)
                     .zIndex(i == vm.top ? 1 : 0)
             }
-            if let ref = vm.selected, ref.platform == .youtube {
+            if vm.pipActive {
+                Label("Playing in Picture in Picture", systemImage: "pip")
+                    .font(.footnote).foregroundStyle(.white.opacity(0.7)).zIndex(2)
+            } else if let ref = vm.selected, ref.platform == .youtube {
                 YouTubePlayer(videoID: ref.path).zIndex(2)
             } else if vm.selected != nil, !vm.isPlaying, vm.playerError == nil {
                 ProgressView().tint(.white).zIndex(2)
@@ -139,6 +146,14 @@ struct PlayerArea: View {
                 Spacer()
                 if vm.latencyShown, vm.selected?.platform != .youtube {
                     LatencyBadge(player: vm.player)
+                }
+                if !isYouTube {
+                    roundButton("headphones") {
+                        withAnimation(.snappy(duration: 0.25)) { vm.audioOnly = true }
+                    }
+                    if AVPictureInPictureController.isPictureInPictureSupported() {
+                        roundButton(vm.pipActive ? "pip.exit" : "pip.enter") { pipRequest += 1 }
+                    }
                 }
                 if landscape {
                     roundButton(chatShown ? "bubble.left.fill" : "bubble.left") {
@@ -192,5 +207,60 @@ struct PlayerArea: View {
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.25)) { controls = false }
         }
+    }
+}
+
+/// Audio only: a slim bar in place of the picture, so chat gets the room. Drags the
+/// same way the picture does, following the finger before it switches.
+struct AudioBar: View {
+    var vm: BigscreenViewModel
+    var onClose: () -> Void
+
+    @State private var drag: CGFloat = 0
+    private static let toSwitch: CGFloat = 90
+
+    private var name: String { vm.selected.map(vm.name(for:)) ?? "" }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: onClose) {
+                Image(systemName: "xmark").font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .background(Color.raised, in: .circle)
+            }
+            Image(systemName: "waveform")
+                .symbolEffect(.variableColor.iterative, isActive: vm.isPlaying)
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
+                Text(vm.isPlaying ? "Audio only" : "Connecting…")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            .offset(x: 60 * (1 - exp(-abs(drag) / 60)) * (drag < 0 ? -1 : 1))
+            Spacer(minLength: 8)
+            Button {
+                withAnimation(.snappy(duration: 0.25)) { vm.audioOnly = false }
+            } label: {
+                Label("Video", systemImage: "play.rectangle.fill")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 12).frame(height: 32)
+                    .background(Color.raised, in: .capsule)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 54)
+        .contentShape(.rect)
+        .gesture(
+            DragGesture(minimumDistance: 12)
+                .onChanged { drag = $0.translation.width }
+                .onEnded { _ in
+                    if abs(drag) >= Self.toSwitch {
+                        vm.step(drag < 0 ? 1 : -1)
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
+                    withAnimation(.snappy(duration: 0.24)) { drag = 0 }
+                })
     }
 }

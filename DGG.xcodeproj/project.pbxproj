@@ -19,6 +19,7 @@
 		AB7E740116D5742F9044C805 /* AnimatedEmote.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43348050456EC2170C16D3B9 /* AnimatedEmote.swift */; };
 		B3303ECB20DF3A806AA9C191 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 69B6D8471055B924E76C12B1 /* Assets.xcassets */; };
 		B5CC6201D5202BFBA399170D /* BigscreenViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5417B101CE51433CF51372 /* BigscreenViewModel.swift */; };
+		DBDA684CDAD946D69E8D84F6 /* NowPlaying.swift in Sources */ = {isa = PBXBuildFile; fileRef = 493B075A54C2A6B93CE8C50B /* NowPlaying.swift */; };
 		DFDC18F6379C05816AA3CE4E /* ChatLineLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8A66A7C29B7363B0B811A9 /* ChatLineLabel.swift */; };
 		E41E3778CECC8FD770DE6BFF /* UserCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83AE95E8316424D4B0C2484E /* UserCard.swift */; };
 		FE3E1F45AFF37C638DE8206B /* DGGKit in Frameworks */ = {isa = PBXBuildFile; productRef = EB914EA7246F60090CAC4011 /* DGGKit */; };
@@ -30,6 +31,7 @@
 		1594555BE34372EE5D4A1654 /* LivePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePlayerView.swift; sourceTree = "<group>"; };
 		3BB9632303CE8BDFFA221570 /* ChatFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatFormat.swift; sourceTree = "<group>"; };
 		43348050456EC2170C16D3B9 /* AnimatedEmote.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedEmote.swift; sourceTree = "<group>"; };
+		493B075A54C2A6B93CE8C50B /* NowPlaying.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlaying.swift; sourceTree = "<group>"; };
 		4CCB453632CA9B6D7BAAAB0B /* PlatformIcon.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformIcon.swift; sourceTree = "<group>"; };
 		57D8C5DA878B7D6DB9CE385A /* LineCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineCache.swift; sourceTree = "<group>"; };
 		5C89CC2A830F4A537C8E3435 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -95,6 +97,7 @@
 				5C89CC2A830F4A537C8E3435 /* Info.plist */,
 				57D8C5DA878B7D6DB9CE385A /* LineCache.swift */,
 				1594555BE34372EE5D4A1654 /* LivePlayerView.swift */,
+				493B075A54C2A6B93CE8C50B /* NowPlaying.swift */,
 				4CCB453632CA9B6D7BAAAB0B /* PlatformIcon.swift */,
 				89712F18C69A1757E3794CC3 /* PlayerArea.swift */,
 				81A6E4637D74FCD8820F23EA /* RootView.swift */,
@@ -189,6 +192,7 @@
 				571C807458684D8B3FAA3A28 /* EmoteImageStore.swift in Sources */,
 				0E4A5E200776C2761B8C71E6 /* LineCache.swift in Sources */,
 				27DA3BABC4CDAFC4001F0250 /* LivePlayerView.swift in Sources */,
+				DBDA684CDAD946D69E8D84F6 /* NowPlaying.swift in Sources */,
 				27B95DBAF7B4E8AA9E230274 /* PlatformIcon.swift in Sources */,
 				1221F252328DCF1B0E9B070A /* PlayerArea.swift in Sources */,
 				7AE4E60DE1C9E1512AB8534C /* RootView.swift in Sources */,

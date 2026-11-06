@@ -15,6 +15,7 @@ DGG is still in development, and there are no builds to install yet.
 - Mentions highlight the way they do on the site
 - Follows your phone's light or dark mode
 - Swipe the video to switch embeds, and turn the phone sideways for video beside chat
+- Audio only, background audio, Picture in Picture and lock screen controls
 
 ## Signing In
 

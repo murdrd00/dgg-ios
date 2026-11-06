@@ -16,8 +16,8 @@ app, the message box with its suggestions, and tapping a link.
 (see below), real posting, scrolling smoothness and battery. Posting and voting have
 only run through the test hooks, which never reach chat.
 
-Not built yet: Picture in Picture and audio in the background. Leaving the app stops
-the stream, as on TV.
+Picture in Picture has only been built, not seen working: the button doesn't appear in
+the simulator, so it needs a phone.
 
 ## Video in the simulator
 
@@ -98,11 +98,31 @@ The site's flair colours are chosen for a dark page. `ChatText.readable` darkens
 in light mode. Colours in attributed strings have to be dynamic `UIColor`s, because
 cached lines don't get rebuilt when the mode changes.
 
+## Listening
+
+Audio only drops the stream to its smallest rendition and removes the player views, so
+AVPlayer stops decoding video. Twitch has a true audio rendition. Kick's lowest is 160p
+video, which still downloads but is never decoded. The setting is remembered. In portrait
+and landscape it swaps the picture for `AudioBar`, which gives chat the room.
+
+Leaving the app keeps the sound going through `audiovisualBackgroundPlaybackPolicy`
+and drops to the same low quality, unless Picture in Picture is showing the picture. With
+the Settings toggle on, leaving floats the video instead. YouTube can't do any of this,
+since it's a web player, and leaving pauses it.
+
+A floating picture belongs to one player layer, so while it's up a change of stream
+reloads that player rather than swapping to the other one.
+
+`NowPlaying` drives the lock screen, Control Center and headphones. Next and previous
+step through the embeds. Pausing for more than 5 seconds reloads, to get back to live.
+
 ## CarPlay
 
-Not built. Apple only allows it with a category entitlement it grants on request, and
-video isn't a thing an app can show while driving, so the realistic form is audio only.
-It needs a paid developer account and background audio first.
+A real CarPlay app needs an audio entitlement Apple grants on request, which needs a paid
+developer account. It would list the embeds and hand off to the audio code above.
+
+Until then, CarPlay's own Now Playing screen should work for any app playing audio, with
+`NowPlaying` supplying the title and next and previous. Not tested in a car.
 
 ## Posting
 

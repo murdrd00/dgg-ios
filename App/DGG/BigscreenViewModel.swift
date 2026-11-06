@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import AVKit
+import MediaPlayer
 import UIKit
 import Security
 import DGGKit
@@ -265,6 +266,109 @@ final class BigscreenViewModel {
         didSet { Saved.store(latencyShown, "latencyShown") }
     }
 
+    // Listening
+
+    /// Audio only: no picture, and the lowest quality the stream offers.
+    var audioOnly: Bool = Saved.value("audioOnly", false) {
+        didSet {
+            Saved.store(audioOnly, "audioOnly")
+            applyQuality()
+        }
+    }
+    /// YouTube plays in its own web player, which has no audio-only form.
+    var audioMode: Bool { audioOnly && selected?.platform != .youtube }
+    var backgroundAudio: Bool = Saved.value("backgroundAudio", true) {
+        didSet { Saved.store(backgroundAudio, "backgroundAudio") }
+    }
+    var pipOnLeave: Bool = Saved.value("pipOnLeave", true) {
+        didSet { Saved.store(pipOnLeave, "pipOnLeave") }
+    }
+    var pipActive = false {
+        didSet { applyQuality() }
+    }
+    private var inBackground = false
+    private var pausedAt: Date?
+    /// Low enough that every stream drops to its smallest rendition, which is
+    /// audio alone where the stream has one.
+    private static let audioBitRate: Double = 200_000
+    @ObservationIgnored private lazy var nowPlaying = NowPlaying(
+        play: { [weak self] in self?.resumeListening() },
+        pause: { [weak self] in self?.pauseListening() },
+        next: { [weak self] in self?.step(1) },
+        previous: { [weak self] in self?.step(-1) })
+
+    /// Nobody is looking at the picture, so don't download one.
+    private var wantsAudioOnly: Bool { audioMode || (inBackground && !pipActive) }
+
+    private func applyQuality() {
+        player.currentItem?.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate : wantsQuality,
+                                                        rewritten: liveLoaders[active] != nil)
+    }
+
+    func enteredBackground() {
+        inBackground = true
+        let keeps = selected != nil && selected?.platform != .youtube && shown != nil
+            && (backgroundAudio || pipActive)
+        if keeps {
+            applyQuality()
+        } else {
+            suspend()
+        }
+    }
+
+    func enteredForeground() {
+        inBackground = false
+        applyQuality()
+        foregrounded()
+        resume()
+    }
+
+    private func pauseListening() {
+        player.pause()
+        pausedAt = Date()
+        updateNowPlaying()
+    }
+
+    /// Picks up live: a stream paused for long has fallen behind, so it reloads.
+    private func resumeListening() {
+        defer { pausedAt = nil }
+        if let pausedAt, Date().timeIntervalSince(pausedAt) > 5, let selected {
+            load(selected, quality: wantsQuality)
+        } else {
+            player.play()
+        }
+    }
+
+    private func updateNowPlaying() {
+        guard let shown else {
+            nowPlaying.clear()
+            return
+        }
+        nowPlaying.show(title: name(for: shown), subtitle: titles[shown.token] ?? "destiny.gg",
+                        playing: player.timeControlStatus != .paused)
+    }
+
+    /// A phone call or an alarm stops the audio, and iOS says when to carry on.
+    private func watchInterruptions() {
+        NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let info = note.userInfo
+            let type = (info?[AVAudioSessionInterruptionTypeKey] as? UInt)
+                .flatMap(AVAudioSession.InterruptionType.init)
+            let options = AVAudioSession.InterruptionOptions(
+                rawValue: info?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0)
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if type == .began {
+                    self.pausedAt = Date()
+                } else if type == .ended, options.contains(.shouldResume) {
+                    self.resumeListening()
+                }
+            }
+        }
+    }
+
     // People
 
     private(set) var ignored = Set(Saved.value("ignoredNicks", [String]())) {
@@ -485,6 +589,8 @@ final class BigscreenViewModel {
         // buffered; on a slow decoder it stalls at once and never recovers
         // (the playhead freezes a few seconds in and AVKit just reheartbeats).
         p.automaticallyWaitsToMinimizeStalling = true
+        // Keeps the sound going when the app leaves the screen, picture attached or not.
+        p.audiovisualBackgroundPlaybackPolicy = .continuesIfPossible
         return p
     }
 
@@ -523,6 +629,7 @@ final class BigscreenViewModel {
 
     private func updatePlaying() {
         isPlaying = player.timeControlStatus == .playing
+        updateNowPlaying()
     }
     private let maxLines = 300
 
@@ -708,7 +815,11 @@ final class BigscreenViewModel {
         }
     }
 
+    /// Closed with its cross. Only hides it here, as on the site.
+    var pollDismissed = false
+
     private func clearPoll() {
+        pollDismissed = false
         pollHide?.cancel()
         pollRefresh?.cancel(); pollRefresh = nil
         voteTimeout?.cancel()
@@ -789,6 +900,7 @@ final class BigscreenViewModel {
         }
         // Plays with the ringer switch on silent, as a video app should.
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+        watchInterruptions()
         playingObservers = players.map {
             $0.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
                 Task { @MainActor in self?.updatePlaying() }
@@ -964,6 +1076,8 @@ final class BigscreenViewModel {
             if link != .live { link = .live }
             tracker.observe(l)
             if !isIgnored(l.nick) { pending.append(display(l)) }
+            // Listening with the phone locked, nothing is taking these.
+            if pending.count > 600 { pending.removeFirst(pending.count - 600) }
 
         case .whisper(let l):
             guard !isIgnored(l.nick) else { break }
@@ -1219,6 +1333,7 @@ final class BigscreenViewModel {
     private var loadID = 0
 
     func stopPlayback() {
+        defer { nowPlaying.clear() }
         selected = nil
         playerError = nil
         backdrop = nil
@@ -1258,7 +1373,7 @@ final class BigscreenViewModel {
         // Otherwise it's still loading, and these apply when it appears.
         if shown == ref {
             player.isMuted = false
-            player.currentItem?.preferredPeakBitRate = peak(wantsQuality, rewritten: liveLoaders[active] != nil)
+            applyQuality()
         }
     }
 
@@ -1272,7 +1387,7 @@ final class BigscreenViewModel {
         wantsMuted = true
         wantsQuality = Self.previewBitRate
         player.isMuted = true
-        player.currentItem?.preferredPeakBitRate = peak(wantsQuality, rewritten: liveLoaders[active] != nil)
+        applyQuality()
     }
 
     /// Keeps `selected`, so `resume` can bring the same stream back at the
@@ -1307,8 +1422,11 @@ final class BigscreenViewModel {
         loadID += 1
         let id = loadID
         settleLayers()
-        let nextIndex = 1 - active
-        let next = standby
+        // A floating picture is tied to one player, so it reloads that one
+        // rather than swapping, which would leave the window empty.
+        let inPlace = pipActive
+        let nextIndex = inPlace ? active : 1 - active
+        let next = players[nextIndex]
         next.replaceCurrentItem(with: nil)
         displayReady[nextIndex] = false
 
@@ -1336,7 +1454,8 @@ final class BigscreenViewModel {
                 let loader = lowLatency ? LiveLoader() : nil
                 liveLoaders[nextIndex] = loader
                 let item = loader.map { AVPlayerItem(asset: $0.asset(for: url)) } ?? AVPlayerItem(url: url)
-                item.preferredPeakBitRate = peak(quality, rewritten: lowLatency)
+                item.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate : quality,
+                                                 rewritten: lowLatency)
                 item.preferredForwardBufferDuration = 4
                 next.isMuted = true
                 next.replaceCurrentItem(with: item)
@@ -1344,7 +1463,9 @@ final class BigscreenViewModel {
                 watchPlayback(item)
 
                 let deadline = Date().addingTimeInterval(15)
-                while !displayReady[nextIndex], item.status != .failed, Date() < deadline {
+                // With no picture to wait for, sound is what counts.
+                while !displayReady[nextIndex], item.status != .failed, Date() < deadline,
+                      !(wantsAudioOnly && next.timeControlStatus == .playing) {
                     try await Task.sleep(for: .milliseconds(100))
                     guard id == loadID else { return }
                 }
@@ -1360,8 +1481,17 @@ final class BigscreenViewModel {
                     fail("no picture")
                 } else {
                     if lowLatency { liveEdge.follow(item, on: next) } else { liveEdge.stop() }
-                    let framed = displayReady[nextIndex]
-                    reveal(ref, url: url, id: id)
+                    let framed = displayReady[nextIndex] || wantsAudioOnly
+                    if inPlace {
+                        streamURL = url
+                        shown = ref
+                        backdrop = nil
+                        next.isMuted = wantsMuted
+                        applyQuality()
+                        updateNowPlaying()
+                    } else {
+                        reveal(ref, url: url, id: id)
+                    }
                     noPicture = !framed
                 }
             } catch {
@@ -1418,8 +1548,9 @@ final class BigscreenViewModel {
         backdrop = nil
         outgoing.isMuted = true
         player.isMuted = wantsMuted
-        player.currentItem?.preferredPeakBitRate = peak(wantsQuality, rewritten: liveLoaders[active] != nil)
+        applyQuality()
         updatePlaying()
+        try? AVAudioSession.sharedInstance().setActive(true)
         Task {
             try? await Task.sleep(for: .seconds(0.45))
             // A newer load already owns that player, and has cleared it.
