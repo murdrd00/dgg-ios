@@ -295,7 +295,6 @@ final class BigscreenViewModel {
     private static let audioBitRate: Double = 200_000
     @ObservationIgnored private lazy var nowPlaying = NowPlaying(
         play: { [weak self] in self?.resumeListening() },
-        pause: { [weak self] in self?.pauseListening() },
         next: { [weak self] in self?.step(1) },
         previous: { [weak self] in self?.step(-1) })
 
@@ -325,12 +324,6 @@ final class BigscreenViewModel {
         resume()
     }
 
-    private func pauseListening() {
-        player.pause()
-        pausedAt = Date()
-        updateNowPlaying()
-    }
-
     /// Picks up live: a stream paused for long has fallen behind, so it reloads.
     private func resumeListening() {
         defer { pausedAt = nil }
@@ -346,8 +339,12 @@ final class BigscreenViewModel {
             nowPlaying.clear()
             return
         }
+        let list = switchableEmbeds
+        let at = list.firstIndex { $0.ref == selected }
         nowPlaying.show(title: name(for: shown), subtitle: titles[shown.token] ?? "destiny.gg",
-                        playing: player.timeControlStatus != .paused)
+                        playing: player.timeControlStatus != .paused,
+                        canGoNext: at.map { $0 + 1 < list.count } ?? false,
+                        canGoBack: at.map { $0 > 0 } ?? false)
     }
 
     /// A phone call or an alarm stops the audio, and iOS says when to carry on.
@@ -620,6 +617,8 @@ final class BigscreenViewModel {
         offline = Set(items.filter { $0.live == false }.map(\.ref.token))
         checkedOnce = true
         tick()
+        // The order changes with the viewers, and so what next and previous can do.
+        updateNowPlaying()
     }
     private let resolver = StreamResolver()
     private var flairs: [String: Flair] = [:]

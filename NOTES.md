@@ -114,7 +114,10 @@ A floating picture belongs to one player layer, so while it's up a change of str
 reloads that player rather than swapping to the other one.
 
 `NowPlaying` drives the lock screen, Control Center and headphones. Next and previous
-step through the embeds. Pausing for more than 5 seconds reloads, to get back to live.
+step through the embeds, and grey out at the ends of the list. Pause and every seek
+command are off, because it's all live, so headphones can't pause it either. Play stays:
+iOS stops the player for a call or lost headphones, and after 5 seconds it reloads to
+get back to live. The simulator's lock button doesn't lock it, so check this on a phone.
 
 ## CarPlay
 

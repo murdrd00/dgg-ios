@@ -1,16 +1,17 @@
 import MediaPlayer
 import UIKit
 
-/// The lock screen, Control Center and headphone buttons. Next and previous step
-/// through the embeds, the way they'd skip tracks.
+/// The lock screen, Control Center and headphone buttons. It's all live, so there's
+/// nothing to seek or pause: next and previous step through the embeds, the way
+/// they'd skip tracks. Play stays, to pick up after a call or lost headphones.
 @MainActor
 final class NowPlaying {
     private static let art: MPMediaItemArtwork? = UIImage(named: "NowPlayingArt").map { image in
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 
-    init(play: @escaping () -> Void, pause: @escaping () -> Void,
-         next: @escaping () -> Void, previous: @escaping () -> Void) {
+    init(play: @escaping () -> Void, next: @escaping () -> Void,
+         previous: @escaping () -> Void) {
         let center = MPRemoteCommandCenter.shared()
         func wire(_ command: MPRemoteCommand, _ action: @escaping () -> Void) {
             command.isEnabled = true
@@ -20,22 +21,23 @@ final class NowPlaying {
             }
         }
         wire(center.playCommand, play)
-        wire(center.pauseCommand, pause)
         wire(center.nextTrackCommand, next)
         wire(center.previousTrackCommand, previous)
-        center.togglePlayPauseCommand.isEnabled = true
-        center.togglePlayPauseCommand.addTarget { [weak self] _ in
-            MainActor.assumeIsolated {
-                if self?.playing == true { pause() } else { play() }
-            }
-            return .success
+        for command: MPRemoteCommand in [
+            center.pauseCommand, center.togglePlayPauseCommand, center.stopCommand,
+            center.skipForwardCommand, center.skipBackwardCommand,
+            center.seekForwardCommand, center.seekBackwardCommand,
+            center.changePlaybackPositionCommand, center.changePlaybackRateCommand,
+        ] {
+            command.isEnabled = false
         }
     }
 
-    private var playing = false
-
-    func show(title: String, subtitle: String, playing: Bool) {
-        self.playing = playing
+    /// `canGoNext` and `canGoBack` say whether there's another embed that way.
+    func show(title: String, subtitle: String, playing: Bool, canGoNext: Bool, canGoBack: Bool) {
+        let center = MPRemoteCommandCenter.shared()
+        center.nextTrackCommand.isEnabled = canGoNext
+        center.previousTrackCommand.isEnabled = canGoBack
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: title,
             MPMediaItemPropertyArtist: subtitle,
@@ -47,7 +49,6 @@ final class NowPlaying {
     }
 
     func clear() {
-        playing = false
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 }
