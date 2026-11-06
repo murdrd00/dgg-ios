@@ -261,6 +261,9 @@ final class ChatListController: UIViewController, UITableViewDelegate, UIGesture
     }
 
     private func resume() {
+        // Setting the offset alone leaves a flick coasting, which pulls chat
+        // straight back off the bottom. This is what stops it dead.
+        table.setContentOffset(table.contentOffset, animated: false)
         following = true
         vm.flush()
         sync()
