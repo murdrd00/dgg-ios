@@ -165,3 +165,13 @@ opens rather than speeding up. dgg-tv's NOTES.md has the measurements. The one d
 is that pausing is allowed here, so only a player stuck waiting counts as frozen. Checked
 in the simulator as far as the skip firing, since Kick has no picture there. Judge it on
 a phone.
+
+## AngelThump
+
+Embeds like `#angelthump/ozma` play. Its web player asks `vigor.angelthump.com/<channel>/token`
+for an anonymous token, sending a fixed `Identifier` header, and then plays
+`vigor.angelthump.com/hls/<channel>.m3u8?token=...`, an ordinary HLS stream. The app does
+the same, once per open. Live status and titles come from `api.angelthump.com/v3/streams`.
+Before this, an unknown platform in the site's feed was dropped, so an AngelThump-only
+Big Screen showed nothing at all. Minimize latency is Kick only, so these run about 25s
+behind.
