@@ -157,3 +157,11 @@ environment values only exist in Debug builds, except the first two:
 
 Pass them to `simctl launch` with a `SIMCTL_CHILD_` prefix. A real poll that starts during
 a test replaces the made-up one.
+
+## Delay on Kick
+
+`LiveEdge` matches dgg-tv: one Minimize latency switch, and a single skip after a stream
+opens rather than speeding up. dgg-tv's NOTES.md has the measurements. The one difference
+is that pausing is allowed here, so only a player stuck waiting counts as frozen. Checked
+in the simulator as far as the skip firing, since Kick has no picture there. Judge it on
+a phone.

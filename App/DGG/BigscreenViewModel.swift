@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import AVKit
 import MediaPlayer
+import OSLog
 import UIKit
 import Security
 import DGGKit
@@ -81,27 +82,51 @@ private enum Saved {
     }
 }
 
-/// Holds a stream close to the newest video AVPlayer has.
+/// Holds a stream close to the newest video AVPlayer has, and works out how
+/// close each stream can stand.
 ///
-/// It starts well back and has no setting that moves it: `configuredTimeOffsetFromLive`
-/// made no difference to these streams. The buffer it builds up in front of itself
-/// is delay and nothing else, so this skips forward through it now and then. It
-/// has to be a skip: setting a rate above 1 froze live streams on a real Apple TV.
+/// AVPlayer starts well back and has no setting that moves it:
+/// `configuredTimeOffsetFromLive` made no difference to these streams. Once it
+/// has buffered up to the edge, everything in front of it past what's needed is
+/// delay and nothing else, so this skips it in one go. Asking for 1.5x did
+/// nothing on these streams: the rate stayed at 1.
+///
+/// What it learns is kept in memory only, per stream, so hopping away and back
+/// picks up where it was, and it's gone when the stream ends or the app closes.
 @MainActor
 final class LiveEdge {
-    /// Seconds of buffer to keep, from the setting.
-    var base = 1.0 {
-        didSet {
-            cushion = base
-            recent = []
-        }
+    private static let log = Logger(subsystem: "DGGTV", category: "latency")
+
+    /// Seconds of buffer to keep. A stream starts where most run smoothly, and
+    /// goes lower for as long as it keeps playing without a stall.
+    private static let startingCushion = 3.0
+    private static let lowestCushion = 1.0
+    private static let highestCushion = 8.0
+    private static let longestFreeze: TimeInterval = 6
+    /// A little over one segment, so the buffer's low point has been seen.
+    private static let samples = 5
+
+    private struct Learned {
+        var cushion = LiveEdge.startingCushion
+        /// How long to go without a stall before trying less buffer. Doubles at
+        /// each stall, so a stream settles rather than stalling on a schedule.
+        var patience: TimeInterval = 120
     }
-    /// What's in use. Each stall adds a second, as this connection or stream has
-    /// shown it needs more, up to a limit so it can't drift far from the setting.
-    private var cushion = 1.0
+    private var learned: [String: Learned] = [:]
+    private var token = ""
+    private var state = Learned() {
+        didSet { learned[token] = state }
+    }
+    private var steadySince = Date()
+    private var lastStall = Date.distantPast
+    private var lastSkip = Date.distantPast
+    /// AVPlayer reports stalls the picture never shows, which aren't worth
+    /// giving up delay for, so this waits to see if the playhead really stopped.
+    private var stallReported = false
+
     private var task: Task<Void, Never>?
     private var stalls: NSObjectProtocol?
-    private var lastSkip = Date.distantPast
+    private weak var followed: AVPlayer?
     /// The buffer saws up and down as segments land, so its lowest point over a
     /// segment or so is what's truly spare.
     private var recent: [Double] = []
@@ -111,36 +136,91 @@ final class LiveEdge {
         return CMTimeGetSeconds(CMTimeRangeGetEnd(range)) - CMTimeGetSeconds(item.currentTime())
     }
 
-    private func close(_ item: AVPlayerItem, by gap: Double) async {
+    private func skip(_ item: AVPlayerItem, by gap: Double, on player: AVPlayer) async {
+        Self.log.notice("skip \(gap, format: .fixed(precision: 1))s, keeping \(self.state.cushion, format: .fixed(precision: 1))s")
         let target = CMTimeAdd(item.currentTime(), CMTime(seconds: gap, preferredTimescale: 1000))
-        await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 1000))
+        // Left alone it sits on what it has until the next segment lands, which
+        // loses most of what the skip gained.
+        if player.currentItem === item { player.playImmediately(atRate: 1) }
     }
 
-    func follow(_ item: AVPlayerItem, on player: AVPlayer) {
+    private func describe(_ item: AVPlayerItem, _ player: AVPlayer) -> String {
+        let left = ahead(item).map { String(format: "%.1f", $0) } ?? "?"
+        return "status \(player.timeControlStatus.rawValue), "
+            + "waiting \(player.reasonForWaitingToPlay?.rawValue ?? "-"), "
+            + "rate \(player.rate), buffer \(left)s, keepUp \(item.isPlaybackLikelyToKeepUp)"
+    }
+
+    /// A stall means this was too little buffer for this stream.
+    private func stalled() {
+        guard Date().timeIntervalSince(lastStall) > 5 else { return }
+        lastStall = Date()
+        steadySince = Date()
+        state.cushion = min(state.cushion + 1, Self.highestCushion)
+        state.patience = min(state.patience * 2, 1800)
+        Self.log.notice("stall, now keeping \(self.state.cushion, format: .fixed(precision: 1))s")
+    }
+
+    private func tryLessBuffer() {
+        guard state.cushion > Self.lowestCushion,
+              Date().timeIntervalSince(steadySince) > state.patience else { return }
+        steadySince = Date()
+        state.cushion = max(state.cushion - 0.5, Self.lowestCushion)
+        Self.log.notice("steady, trying \(self.state.cushion, format: .fixed(precision: 1))s")
+    }
+
+    /// `onStuck` runs if the picture stops for good. AVPlayer doesn't always
+    /// recover from a freeze by itself, and opening the stream again does.
+    func follow(_ item: AVPlayerItem, token: String, on player: AVPlayer,
+                onStuck: @escaping () -> Void) {
         stop()
-        cushion = base
+        let known = learned[token]
+        self.token = token
+        state = known ?? Learned()
+        followed = player
+        steadySince = Date()
+        lastStall = .distantPast
         lastSkip = .distantPast
         recent = []
         stalls = NotificationCenter.default.addObserver(
             forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.cushion = min(self.cushion + 1, self.base + 3)
-            }
+            MainActor.assumeIsolated { self?.stallReported = true }
         }
         task = Task { [weak self, weak player, weak item] in
+            var position = item?.currentTime().seconds ?? 0
+            var movedAt = Date()
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self, let player, let item, player.currentItem === item else { return }
+
+                let now = item.currentTime().seconds
+                if self.stallReported {
+                    self.stallReported = false
+                    if now < position + 0.5 { self.stalled() } else { Self.log.notice("stall that never showed") }
+                }
+                // Pausing is the user's, so only waiting counts as stuck.
+                if now > position + 0.1 || player.timeControlStatus != .waitingToPlayAtSpecifiedRate {
+                    position = now
+                    movedAt = Date()
+                } else if Date().timeIntervalSince(movedAt) > Self.longestFreeze {
+                    Self.log.error("stuck, reopening: \(self.describe(item, player))")
+                    self.stalled()
+                    onStuck()
+                    return
+                }
+
                 guard player.timeControlStatus == .playing, let ahead = self.ahead(item) else { continue }
-                self.recent = (self.recent + [ahead]).suffix(7)
-                let gap = (self.recent.min() ?? 0) - self.cushion
-                guard self.recent.count == 7, gap > 0.75,
+                self.tryLessBuffer()
+
+                self.recent = (self.recent + [ahead]).suffix(Self.samples)
+                let gap = (self.recent.min() ?? 0) - self.state.cushion
+                guard self.recent.count == Self.samples, gap > 0.75,
                       Date().timeIntervalSince(self.lastSkip) > 15 else { continue }
+                await self.skip(item, by: gap, on: player)
                 self.lastSkip = Date()
                 self.recent = []
-                await self.close(item, by: gap)
             }
         }
     }
@@ -150,6 +230,12 @@ final class LiveEdge {
         task = nil
         if let stalls { NotificationCenter.default.removeObserver(stalls) }
         stalls = nil
+        followed = nil
+    }
+
+    /// Streams that have ended start from scratch if they come back.
+    func forget(allBut live: Set<String>) {
+        learned = learned.filter { live.contains($0.key) }
     }
 }
 
@@ -183,19 +269,14 @@ final class BigscreenViewModel {
     // MARK: - Settings
     /// destiny.gg can split chat by what each person is watching. Every line
     /// carries `watching`, so this is just a filter.
-    /// Seconds of buffer to keep on Kick, which is delay traded for fewer stalls.
-    /// `liveDelayOff` plays the ordinary stream instead.
-    var liveCushion: Double = Saved.value("liveCushion", 1) {
+    /// Plays Kick close to live. Off plays the ordinary stream.
+    var minimizesLatency: Bool = Saved.value("minimizesLatency", true) {
         didSet {
-            Saved.store(liveCushion, "liveCushion")
-            liveEdge.base = liveCushion
-            let wasOff = oldValue >= Self.liveDelayOff
-            guard wasOff != lowDelayOff, let selected, selected.platform == .kick else { return }
+            Saved.store(minimizesLatency, "minimizesLatency")
+            guard let selected, selected.platform == .kick else { return }
             load(selected, quality: wantsQuality)
         }
     }
-    static let liveDelayOff: Double = 9
-    private var lowDelayOff: Bool { liveCushion >= Self.liveDelayOff }
 
     /// Set by the view: true while a stream is open rather than the list.
     var isWatching = false
@@ -477,7 +558,13 @@ final class BigscreenViewModel {
         return t
     }
 
-    var embeds: [EmbedTracker.Entry] = []
+    var embeds: [EmbedTracker.Entry] = [] {
+        didSet {
+            // An empty list only means it hasn't arrived yet.
+            guard !embeds.isEmpty else { return }
+            liveEdge.forget(allBut: Set(embeds.map(\.ref.token)).subtracting(offline))
+        }
+    }
     /// What the player can switch between. YouTube is included even though it
     /// can't play here: landing on one offers to open it instead.
     var switchableEmbeds: [EmbedTracker.Entry] {
@@ -1371,6 +1458,20 @@ final class BigscreenViewModel {
     }
     private var lastDropRetry = Date.distantPast
 
+    /// The picture froze and AVPlayer isn't getting it back. Reopening clears it,
+    /// so that's tried a few times before calling the stream dead.
+    private func reopenStuck(_ item: AVPlayerItem) {
+        guard item === player.currentItem, let ref = selected, ref == shown else { return }
+        stuckReopens = stuckReopens.filter { Date().timeIntervalSince($0) < 120 } + [Date()]
+        guard stuckReopens.count <= 3 else {
+            stuckReopens = []
+            fail(Self.wontPlay)
+            return
+        }
+        load(ref, quality: wantsQuality)
+    }
+    private var stuckReopens: [Date] = []
+
     /// Select on the error screen.
     func retryStream() {
         guard playerError != nil, let ref = selected else { return }
@@ -1526,14 +1627,16 @@ final class BigscreenViewModel {
                 guard id == loadID else { return }
                 // Rewritten playlists are what get Kick's delay down. If one
                 // ever fails, this stream goes back to the plain one.
-                let lowLatency = ref.platform == .kick && !lowDelayOff
+                let lowLatency = ref.platform == .kick && minimizesLatency
                     && !plainStreams.contains(ref.token)
                 let loader = lowLatency ? LiveLoader() : nil
                 liveLoaders[nextIndex] = loader
                 let item = loader.map { AVPlayerItem(asset: $0.asset(for: url)) } ?? AVPlayerItem(url: url)
                 item.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate : quality,
                                                  rewritten: lowLatency)
-                item.preferredForwardBufferDuration = 4
+                // Rewritten streams buffer all the way to the edge, so one skip
+                // can see the whole distance. With 4 it took several small ones.
+                item.preferredForwardBufferDuration = lowLatency ? 30 : 4
                 next.isMuted = true
                 next.replaceCurrentItem(with: item)
                 next.play()
@@ -1557,7 +1660,13 @@ final class BigscreenViewModel {
                     // watched still goes ahead, for its audio.
                     fail("no picture")
                 } else {
-                    if lowLatency { liveEdge.follow(item, on: next) } else { liveEdge.stop() }
+                    if lowLatency {
+                        liveEdge.follow(item, token: ref.token, on: next) { [weak self, weak item] in
+                            if let item { self?.reopenStuck(item) }
+                        }
+                    } else {
+                        liveEdge.stop()
+                    }
                     let framed = displayReady[nextIndex] || wantsAudioOnly
                     if inPlace {
                         streamURL = url
@@ -1597,11 +1706,7 @@ final class BigscreenViewModel {
         rewritten ? quality / LiveLoader.bitrateScale : quality
     }
     private var plainStreams: Set<String> = []
-    @ObservationIgnored private lazy var liveEdge: LiveEdge = {
-        let edge = LiveEdge()
-        edge.base = liveCushion
-        return edge
-    }()
+    @ObservationIgnored private let liveEdge = LiveEdge()
 
     private func thumbnail(_ ref: EmbedRef) async -> UIImage? {
         if let hit = thumbnails[ref.token] { return hit }

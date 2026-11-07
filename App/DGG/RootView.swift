@@ -638,15 +638,11 @@ struct SettingsView: View {
                     Toggle("Latency counter", isOn: $vm.latencyShown)
                     Toggle("Keep playing in the background", isOn: $vm.backgroundAudio)
                     Toggle("Picture in Picture on leaving", isOn: $vm.pipOnLeave)
-                    LabeledContent("Low delay") {
-                        Text(vm.liveCushion >= BigscreenViewModel.liveDelayOff
-                             ? "Off" : "\(Int(vm.liveCushion))s buffer")
-                    }
-                    Slider(value: $vm.liveCushion, in: 1...BigscreenViewModel.liveDelayOff, step: 1)
+                    Toggle("Minimize latency", isOn: $vm.minimizesLatency)
                 } header: {
                     Text("Streams")
                 } footer: {
-                    Text("Low delay applies to Kick. If a stream buffers a lot, raise it: more seconds means more delay but fewer stalls.")
+                    Text("Minimize latency keeps Kick streams as close to live as each one can manage, skipping ahead once when a stream opens.")
                 }
 
                 if !vm.ignored.isEmpty {
