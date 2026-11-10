@@ -182,7 +182,7 @@ up to 30s ahead like rewritten Kick, which doesn't change the delay.
 
 ## Pause and losing signal
 
-Pause is back, in the player, the audio bar, the lock screen and headphones. Playing
+Pause is back, in the middle of the picture, the audio bar, the lock screen and headphones. Playing
 again within 5s carries on; after that it reloads at live.
 
 AVPlayer rides out a short loss by itself. After a long one, like a drive through a dead

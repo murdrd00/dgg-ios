@@ -115,14 +115,7 @@ struct PlayerArea: View {
             } else if let ref = vm.selected, ref.platform == .youtube {
                 YouTubePlayer(videoID: ref.path).zIndex(2)
             } else if vm.userPaused {
-                Button { vm.togglePause() } label: {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 26, weight: .semibold))
-                        .foregroundStyle(.white)
-                        .frame(width: 64, height: 64)
-                        .background(.black.opacity(0.5), in: .circle)
-                }
-                .zIndex(2)
+                centerButton("play.fill").zIndex(2)
             } else if vm.selected != nil, !vm.isPlaying, vm.playerError == nil {
                 ProgressView().tint(.white).zIndex(2)
             }
@@ -162,13 +155,6 @@ struct PlayerArea: View {
                     LatencyBadge(player: vm.player)
                 }
                 if !isYouTube {
-                    // Paused, the play button sits in the middle instead.
-                    if !vm.userPaused {
-                        roundButton("pause.fill") {
-                            vm.togglePause()
-                            pokeControls()
-                        }
-                    }
                     roundButton("headphones") {
                         withAnimation(.snappy(duration: 0.25)) { vm.audioOnly = true }
                     }
@@ -185,6 +171,24 @@ struct PlayerArea: View {
             Spacer()
         }
         .padding(10)
+        .overlay {
+            // Paused, the play button stays up by itself in the picture.
+            if vm.isPlaying, !vm.userPaused, !vm.pipActive { centerButton("pause.fill") }
+        }
+    }
+
+    /// Play and pause, in the middle of the picture.
+    private func centerButton(_ symbol: String) -> some View {
+        Button {
+            vm.togglePause()
+            pokeControls()
+        } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 26, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 64, height: 64)
+                .background(.black.opacity(0.5), in: .circle)
+        }
     }
 
     private func roundButton(_ symbol: String, action: @escaping () -> Void) -> some View {
