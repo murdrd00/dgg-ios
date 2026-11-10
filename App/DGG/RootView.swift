@@ -639,10 +639,11 @@ struct SettingsView: View {
                     Toggle("Keep playing in the background", isOn: $vm.backgroundAudio)
                     Toggle("Picture in Picture on leaving", isOn: $vm.pipOnLeave)
                     Toggle("Minimize latency", isOn: $vm.minimizesLatency)
+                    Toggle("Extra buffer on mobile data", isOn: $vm.cushionOnData)
                 } header: {
                     Text("Streams")
                 } footer: {
-                    Text("Minimize latency keeps Kick streams as close to live as each one can manage, skipping ahead once when a stream opens.")
+                    Text("Minimize latency keeps Kick streams as close to live as each one can manage, skipping ahead once when a stream opens. Extra buffer on mobile data plays about 20 to 25 seconds behind instead, so short signal drops don't cut out. Each applies when a stream opens.")
                 }
 
                 if !vm.ignored.isEmpty {

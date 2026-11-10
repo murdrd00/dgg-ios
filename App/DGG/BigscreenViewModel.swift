@@ -271,6 +271,14 @@ final class BigscreenViewModel {
     /// destiny.gg can split chat by what each person is watching. Every line
     /// carries `watching`, so this is just a filter.
     /// Plays Kick close to live. Off plays the ordinary stream.
+    /// On mobile data, plays well behind live so there's a reserve to ride out
+    /// a dead spot. Takes effect when a stream next opens.
+    var cushionOnData: Bool = Saved.value("cushionOnData", true) {
+        didSet { Saved.store(cushionOnData, "cushionOnData") }
+    }
+    private var onCellular = false
+    private var wantsCushion: Bool { cushionOnData && onCellular }
+
     var minimizesLatency: Bool = Saved.value("minimizesLatency", true) {
         didSet {
             Saved.store(minimizesLatency, "minimizesLatency")
@@ -1479,6 +1487,16 @@ final class BigscreenViewModel {
     }
     private var lastDropRetry = Date.distantPast
 
+    /// Moves to the oldest part of the stream the site still has, a few seconds
+    /// in so it isn't dropped while playing. Everything from there to live is
+    /// then reserve. Kick keeps 24 to 29s, so this sits about 20 to 25s behind.
+    private func fallBack(_ item: AVPlayerItem) async {
+        guard let range = item.seekableTimeRanges.first?.timeRangeValue else { return }
+        let target = CMTimeAdd(range.start, CMTime(seconds: 5, preferredTimescale: 1000))
+        guard CMTimeGetSeconds(item.currentTime()) - CMTimeGetSeconds(target) > 5 else { return }
+        await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 1000))
+    }
+
     // MARK: - Getting back after losing signal
 
     /// AVPlayer rides out a short loss by itself. After a long one the stream
@@ -1499,8 +1517,10 @@ final class BigscreenViewModel {
     private func watchConnection() {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             let up = path.status == .satisfied
+            let cellular = path.usesInterfaceType(.cellular) && !path.usesInterfaceType(.wifi)
             Task { @MainActor in
                 guard let self else { return }
+                if up { self.onCellular = cellular }
                 let cameBack = up && !self.networkUp
                 self.networkUp = up
                 if cameBack {
@@ -1719,7 +1739,8 @@ final class BigscreenViewModel {
                 guard id == loadID else { return }
                 // Rewritten playlists are what get Kick's delay down. If one
                 // ever fails, this stream goes back to the plain one.
-                let lowLatency = ref.platform == .kick && minimizesLatency
+                let cushioned = wantsCushion
+                let lowLatency = ref.platform == .kick && minimizesLatency && !cushioned
                     && !plainStreams.contains(ref.token)
                 let loader = lowLatency ? LiveLoader() : nil
                 liveLoaders[nextIndex] = loader
@@ -1731,8 +1752,8 @@ final class BigscreenViewModel {
                 // AngelThump has one quality and slow-starting segments, so 4s
                 // was a single segment of reserve and it stalled. Delay is the
                 // same either way: this is only how much is held in hand.
-                item.preferredForwardBufferDuration =
-                    lowLatency || ref.platform == .angelthump ? 30 : 4
+                item.preferredForwardBufferDuration = cushioned ? 60
+                    : lowLatency || ref.platform == .angelthump ? 30 : 4
                 next.isMuted = true
                 next.replaceCurrentItem(with: item)
                 next.play()
@@ -1745,6 +1766,8 @@ final class BigscreenViewModel {
                     try await Task.sleep(for: .milliseconds(100))
                     guard id == loadID else { return }
                 }
+                guard id == loadID else { return }
+                if cushioned, item.status == .readyToPlay { await fallBack(item) }
                 guard id == loadID else { return }
                 // Without signal everything fails, which says nothing about the
                 // rewritten stream.

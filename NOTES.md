@@ -196,3 +196,12 @@ signal no longer counts against Kick's rewritten playlists.
 Untested on the road. iOS may suspend an app whose audio has stopped, and nothing here
 runs while it's suspended. If that's what happens, it will still pick up when the app
 is opened or play is pressed, but not by itself.
+
+## Extra buffer on mobile data
+
+On by default. On mobile data, a stream opens as the plain playlist (no Minimize latency),
+buffers up to 60s ahead, and seeks to 5s after the oldest part the site still lists.
+Everything from there to live is reserve for dead spots. Kick listed 24 to 29s, so it sits
+about 20 to 25s behind; faked mobile data in the simulator went from 7.6s to 28.7s behind.
+Twitch's window wasn't measured. It applies when a stream opens or reconnects, not when the
+connection changes mid-stream, so walking out of Wi-Fi doesn't replay what was just heard.
