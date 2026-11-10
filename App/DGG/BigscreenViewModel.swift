@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import AVKit
 import MediaPlayer
+import Network
 import OSLog
 import UIKit
 import Security
@@ -380,6 +381,8 @@ final class BigscreenViewModel {
     private static let audioBitRate: Double = 200_000
     @ObservationIgnored private lazy var nowPlaying = NowPlaying(
         play: { [weak self] in self?.resumeListening() },
+        pause: { [weak self] in self?.pauseListening() },
+        toggle: { [weak self] in self?.togglePause() },
         next: { [weak self] in self?.step(1) },
         previous: { [weak self] in self?.step(-1) })
 
@@ -409,9 +412,26 @@ final class BigscreenViewModel {
         resume()
     }
 
+    /// Paused by the user, from the app or the lock screen. Nothing recovers a
+    /// stream while this is set.
+    private(set) var userPaused = false
+
+    func togglePause() {
+        if userPaused { resumeListening() } else { pauseListening() }
+    }
+
+    private func pauseListening() {
+        guard selected != nil, selected?.youTubeAppURL == nil else { return }
+        player.pause()
+        pausedAt = Date()
+        userPaused = true
+        updateNowPlaying()
+    }
+
     /// Picks up live: a stream paused for long has fallen behind, so it reloads.
     private func resumeListening() {
         defer { pausedAt = nil }
+        userPaused = false
         if let pausedAt, Date().timeIntervalSince(pausedAt) > 5, let selected {
             load(selected, quality: wantsQuality)
         } else {
@@ -993,6 +1013,7 @@ final class BigscreenViewModel {
         // Plays with the ringer switch on silent, as a video app should.
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         watchInterruptions()
+        watchConnection()
         playingObservers = players.map {
             $0.observe(\.timeControlStatus, options: [.initial, .new]) { [weak self] _, _ in
                 Task { @MainActor in self?.updatePlaying() }
@@ -1458,6 +1479,70 @@ final class BigscreenViewModel {
     }
     private var lastDropRetry = Date.distantPast
 
+    // MARK: - Getting back after losing signal
+
+    /// AVPlayer rides out a short loss by itself. After a long one the stream
+    /// has failed or sits waiting for good, and before this it took a tap on
+    /// play to bring it back. Now it keeps trying, and goes at once when the
+    /// connection comes back.
+    @ObservationIgnored private let pathMonitor = NWPathMonitor()
+    private var networkUp = true
+    private var lastLoad = Date.distantPast
+    private var lastProgress = Date.distantPast
+    private var recoveryAttempts = 0
+    private var nextRecovery = Date.distantPast
+    /// The last address that played, so a retry with no signal can still start
+    /// the player waiting rather than failing straight away and going quiet.
+    private var lastGood: (token: String, url: URL, at: Date)?
+    private var recoveryTask: Task<Void, Never>?
+
+    private func watchConnection() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let up = path.status == .satisfied
+            Task { @MainActor in
+                guard let self else { return }
+                let cameBack = up && !self.networkUp
+                self.networkUp = up
+                if cameBack {
+                    self.nextRecovery = .distantPast
+                    self.recoverIfNeeded()
+                }
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "com.murdrd.dgg.path"))
+        recoveryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                self?.recoverIfNeeded()
+            }
+        }
+    }
+
+    private func recoverIfNeeded() {
+        guard isWatching, let ref = selected, ref.playsInApp, !userPaused,
+              playerError != Self.offlineMessage,
+              // Left in the background without sound, it was stopped on purpose.
+              !inBackground || backgroundAudio || pipActive else {
+            recoveryAttempts = 0
+            return
+        }
+        if isPlaying {
+            lastProgress = Date()
+            recoveryAttempts = 0
+            return
+        }
+        let quietFor = Date().timeIntervalSince(max(lastProgress, lastLoad))
+        guard playerError != nil || quietFor > 15, Date() >= nextRecovery else { return }
+        recoveryAttempts += 1
+        nextRecovery = Date().addingTimeInterval(min(3 * pow(2, Double(recoveryAttempts - 1)), 30))
+        if !networkUp, let lastGood, lastGood.token == ref.token,
+           Date().timeIntervalSince(lastGood.at) < 15 * 60 {
+            load(ref, quality: wantsQuality, reuse: lastGood.url)
+        } else {
+            load(ref, quality: wantsQuality)
+        }
+    }
+
     /// The picture froze and AVPlayer isn't getting it back. Reopening clears it,
     /// so that's tried a few times before calling the stream dead.
     private func reopenStuck(_ item: AVPlayerItem) {
@@ -1480,8 +1565,10 @@ final class BigscreenViewModel {
 
     private static let wontPlay = "This stream wouldn't play."
 
+    private static let offlineMessage = "This stream is offline."
+
     private static func explain(_ error: Error) -> String {
-        if case ResolveError.offline = error { return "This stream is offline." }
+        if case ResolveError.offline = error { return offlineMessage }
         return wontPlay
     }
 
@@ -1590,13 +1677,17 @@ final class BigscreenViewModel {
 
     /// Loads into the hidden player. What's on screen stays until this is
     /// actually running, and only a failure leaves nothing to show.
-    private func load(_ ref: EmbedRef, quality: Double) {
+    /// `reuse` plays an address it already had instead of asking for a new one,
+    /// which needs no network to start, so the player keeps trying.
+    private func load(_ ref: EmbedRef, quality: Double, reuse: URL? = nil) {
         #if DEBUG
         if stagePoster != nil { return }
         #endif
         selected = ref
         playerError = nil
         wantsQuality = quality
+        userPaused = false
+        lastLoad = Date()
         loadID += 1
         let id = loadID
         settleLayers()
@@ -1623,7 +1714,8 @@ final class BigscreenViewModel {
 
         Task { [resolver] in
             do {
-                let url = try await resolver.resolve(ref)
+                let url: URL
+                if let reuse { url = reuse } else { url = try await resolver.resolve(ref) }
                 guard id == loadID else { return }
                 // Rewritten playlists are what get Kick's delay down. If one
                 // ever fails, this stream goes back to the plain one.
@@ -1654,7 +1746,9 @@ final class BigscreenViewModel {
                     guard id == loadID else { return }
                 }
                 guard id == loadID else { return }
-                if item.status == .failed, lowLatency {
+                // Without signal everything fails, which says nothing about the
+                // rewritten stream.
+                if item.status == .failed, lowLatency, networkUp, reuse == nil {
                     plainStreams.insert(ref.token)
                     load(ref, quality: quality)
                 } else if item.status == .failed {
@@ -1672,6 +1766,7 @@ final class BigscreenViewModel {
                         liveEdge.stop()
                     }
                     let framed = displayReady[nextIndex] || wantsAudioOnly
+                    lastGood = (ref.token, url, Date())
                     if inPlace {
                         streamURL = url
                         shown = ref

@@ -80,7 +80,7 @@ struct PlayerArea: View {
             }
             if let error = vm.playerError {
                 errorCard(error)
-            } else if vm.noPicture, !isYouTube {
+            } else if vm.noPicture, !isYouTube, !vm.userPaused {
                 errorCard("No picture from this stream yet.")
             }
             // YouTube's player takes taps for itself, so one couldn't bring
@@ -114,6 +114,15 @@ struct PlayerArea: View {
                     .font(.footnote).foregroundStyle(.white.opacity(0.7)).zIndex(2)
             } else if let ref = vm.selected, ref.platform == .youtube {
                 YouTubePlayer(videoID: ref.path).zIndex(2)
+            } else if vm.userPaused {
+                Button { vm.togglePause() } label: {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 64, height: 64)
+                        .background(.black.opacity(0.5), in: .circle)
+                }
+                .zIndex(2)
             } else if vm.selected != nil, !vm.isPlaying, vm.playerError == nil {
                 ProgressView().tint(.white).zIndex(2)
             }
@@ -153,6 +162,13 @@ struct PlayerArea: View {
                     LatencyBadge(player: vm.player)
                 }
                 if !isYouTube {
+                    // Paused, the play button sits in the middle instead.
+                    if !vm.userPaused {
+                        roundButton("pause.fill") {
+                            vm.togglePause()
+                            pokeControls()
+                        }
+                    }
                     roundButton("headphones") {
                         withAnimation(.snappy(duration: 0.25)) { vm.audioOnly = true }
                     }
@@ -234,12 +250,19 @@ struct AudioBar: View {
                     .frame(width: 32, height: 32)
                     .background(Color.raised, in: .circle)
             }
+            Button { vm.togglePause() } label: {
+                Image(systemName: vm.userPaused ? "play.fill" : "pause.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(width: 32, height: 32)
+                    .background(Color.raised, in: .circle)
+            }
+            .buttonStyle(.plain)
             Image(systemName: "waveform")
                 .symbolEffect(.variableColor.iterative, isActive: vm.isPlaying)
                 .foregroundStyle(.tint)
             VStack(alignment: .leading, spacing: 1) {
                 Text(name).font(.subheadline.weight(.semibold)).lineLimit(1)
-                Text(vm.isPlaying ? "Audio only" : "Connecting…")
+                Text(vm.userPaused ? "Paused" : vm.isPlaying ? "Audio only" : "Connecting…")
                     .font(.caption2).foregroundStyle(.secondary)
             }
             .offset(x: 60 * (1 - exp(-abs(drag) / 60)) * (drag < 0 ? -1 : 1))

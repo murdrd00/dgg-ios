@@ -179,3 +179,20 @@ behind.
 It stalled every so often with a 4s forward buffer: one quality at about 4.5 Mbps, and
 segments that take 0.4s to start arriving, so a single slow one ran it dry. It now buffers
 up to 30s ahead like rewritten Kick, which doesn't change the delay.
+
+## Pause and losing signal
+
+Pause is back, in the player, the audio bar, the lock screen and headphones. Playing
+again within 5s carries on; after that it reloads at live.
+
+AVPlayer rides out a short loss by itself. After a long one, like a drive through a dead
+zone, the stream failed or sat waiting and needed a tap on play. Now, unless paused, a
+stream that's failed or quiet for 15s is reopened, backing off from 3s to 30s between
+tries, and at once when `NWPathMonitor` says the connection is back. With no connection
+at all it restarts the player on the last address that worked instead of asking for a
+new one, so the player is left trying rather than failing at once. A failure without
+signal no longer counts against Kick's rewritten playlists.
+
+Untested on the road. iOS may suspend an app whose audio has stopped, and nothing here
+runs while it's suspended. If that's what happens, it will still pick up when the app
+is opened or play is pressed, but not by itself.

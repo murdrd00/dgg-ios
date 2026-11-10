@@ -2,15 +2,16 @@ import MediaPlayer
 import UIKit
 
 /// The lock screen, Control Center and headphone buttons. It's all live, so there's
-/// nothing to seek or pause: next and previous step through the embeds, the way
-/// they'd skip tracks. Play stays, to pick up after a call or lost headphones.
+/// nothing to seek: next and previous step through the embeds, the way they'd skip
+/// tracks. Pause stops, and play picks up at live.
 @MainActor
 final class NowPlaying {
     private static let art: MPMediaItemArtwork? = UIImage(named: "NowPlayingArt").map { image in
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 
-    init(play: @escaping () -> Void, next: @escaping () -> Void,
+    init(play: @escaping () -> Void, pause: @escaping () -> Void,
+         toggle: @escaping () -> Void, next: @escaping () -> Void,
          previous: @escaping () -> Void) {
         let center = MPRemoteCommandCenter.shared()
         func wire(_ command: MPRemoteCommand, _ action: @escaping () -> Void) {
@@ -21,10 +22,12 @@ final class NowPlaying {
             }
         }
         wire(center.playCommand, play)
+        wire(center.pauseCommand, pause)
+        wire(center.togglePlayPauseCommand, toggle)
         wire(center.nextTrackCommand, next)
         wire(center.previousTrackCommand, previous)
         for command: MPRemoteCommand in [
-            center.pauseCommand, center.togglePlayPauseCommand, center.stopCommand,
+            center.stopCommand,
             center.skipForwardCommand, center.skipBackwardCommand,
             center.seekForwardCommand, center.seekBackwardCommand,
             center.changePlaybackPositionCommand, center.changePlaybackRateCommand,
