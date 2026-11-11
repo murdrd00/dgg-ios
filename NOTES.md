@@ -205,3 +205,11 @@ Everything from there to live is reserve for dead spots. Kick listed 24 to 29s, 
 about 20 to 25s behind; faked mobile data in the simulator went from 7.6s to 28.7s behind.
 Twitch's window wasn't measured. It applies when a stream opens or reconnects, not when the
 connection changes mid-stream, so walking out of Wi-Fi doesn't replay what was just heard.
+
+## Sound in audio only
+
+Kick has no audio-only rendition, and its small renditions carry weaker sound. Measured on
+one stream: 720p and 480p at 196 kbps AAC, 360p at 67, 160p at 51. Audio only used to cap
+at 200 kbps, which landed Kick on 160p. Kick now caps at 1.5 Mbps, which allows 480p, and
+AVPlayer still steps down on a weak signal. Twitch keeps the 200 kbps cap, which lands on
+its audio-only rendition.

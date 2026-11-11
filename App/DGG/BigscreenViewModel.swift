@@ -384,9 +384,14 @@ final class BigscreenViewModel {
     }
     private var inBackground = false
     private var pausedAt: Date?
-    /// Low enough that every stream drops to its smallest rendition, which is
-    /// audio alone where the stream has one.
-    private static let audioBitRate: Double = 200_000
+    /// The cap for sound without picture. Twitch has a rendition that's audio
+    /// alone at full quality, and this is low enough to land on it. Kick has
+    /// none, and squeezes the sound in its small renditions too: 160p carries
+    /// 51 kbps and 360p 67, against 196 in 480p and up. So Kick may go up to
+    /// 480p, and still drops lower by itself when the signal is weak.
+    private static func audioBitRate(for ref: EmbedRef?) -> Double {
+        ref?.platform == .kick ? 1_500_000 : 200_000
+    }
     @ObservationIgnored private lazy var nowPlaying = NowPlaying(
         play: { [weak self] in self?.resumeListening() },
         pause: { [weak self] in self?.pauseListening() },
@@ -398,7 +403,7 @@ final class BigscreenViewModel {
     private var wantsAudioOnly: Bool { audioMode || (inBackground && !pipActive) }
 
     private func applyQuality() {
-        player.currentItem?.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate : wantsQuality,
+        player.currentItem?.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate(for: shown ?? selected) : wantsQuality,
                                                         rewritten: liveLoaders[active] != nil)
     }
 
@@ -1745,7 +1750,7 @@ final class BigscreenViewModel {
                 let loader = lowLatency ? LiveLoader() : nil
                 liveLoaders[nextIndex] = loader
                 let item = loader.map { AVPlayerItem(asset: $0.asset(for: url)) } ?? AVPlayerItem(url: url)
-                item.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate : quality,
+                item.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate(for: ref) : quality,
                                                  rewritten: lowLatency)
                 // Rewritten streams buffer all the way to the edge, so one skip
                 // can see the whole distance. With 4 it took several small ones.
