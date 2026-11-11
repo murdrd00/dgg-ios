@@ -213,3 +213,32 @@ one stream: 720p and 480p at 196 kbps AAC, 360p at 67, 160p at 51. Audio only us
 at 200 kbps, which landed Kick on 160p. Kick now caps at 1.5 Mbps, which allows 480p, and
 AVPlayer still steps down on a weak signal. Twitch keeps the 200 kbps cap, which lands on
 its audio-only rendition.
+
+## Auto volume
+
+Compresstiny's Auto volume (a Web Audio compressor: -34 dB threshold, 12 dB knee, 6:1, 4 ms
+attack, 250 ms release, then 2.2x) can't be done on AVPlayer's sound for live HLS. An
+`MTAudioProcessingTap` attaches to the playing audio track and is never called; the asset
+lists no tracks at all before playback. So with Auto volume on, audio only on Kick and
+Twitch plays through `AutoVolumePlayer` instead: it fetches the playlists and MPEG-TS
+segments itself, pulls out the AAC, decodes it with `AVAudioConverter`, compresses it and
+plays it through `AVAudioEngine`.
+
+- The compressor matches those settings, stereo-linked. Web Audio adds its own makeup
+  (about +17 dB here) on top of the 2.2x, so the total is +24 dB, with a soft limit above
+  0.8 for peaks the attack lets through. On a Kick stream, input between -25 and -21 dB RMS
+  came out between -15 and -13.
+- It picks Twitch's audio-only rendition, or the most the audio cap allows on Kick (480p),
+  steps down a rendition after two segments that arrive slower than 0.8x their length, and
+  back up after ten fast ones. Media sequence numbers line up across renditions.
+- It starts about 6s back, or at the second-oldest segment with the mobile data buffer.
+  Through lost signal it keeps retrying, and starts over from the playlist if it fell out
+  of the window.
+- A rebuilt audio route (CarPlay or Bluetooth connecting) drops what's queued, so it
+  restarts the stream. The old route going away pauses, as AVPlayer does.
+- Three segments in a row with no AAC sends that stream back to AVPlayer.
+- Video and the TV still use AVPlayer, so they get no compression. Doing it there means
+  replacing AVPlayer's video playback too.
+
+Checked in the simulator on Kick only: audio played with 4 to 8s queued and no gaps, and
+pause then play after 5s restarted at live. No Twitch stream was live to try.

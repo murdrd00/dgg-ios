@@ -640,10 +640,11 @@ struct SettingsView: View {
                     Toggle("Picture in Picture on leaving", isOn: $vm.pipOnLeave)
                     Toggle("Minimize latency", isOn: $vm.minimizesLatency)
                     Toggle("Extra buffer on mobile data", isOn: $vm.cushionOnData)
+                    Toggle("Auto volume in audio only", isOn: $vm.autoVolume)
                 } header: {
                     Text("Streams")
                 } footer: {
-                    Text("Minimize latency keeps Kick streams as close to live as each one can manage, skipping ahead once when a stream opens. Extra buffer on mobile data plays about 20 to 25 seconds behind instead, so short signal drops don't cut out. Each applies when a stream opens.")
+                    Text("Minimize latency keeps Kick streams as close to live as each one can manage, skipping ahead once when a stream opens. Extra buffer on mobile data plays about 20 to 25 seconds behind instead, so short signal drops don't cut out. Each applies when a stream opens. Auto volume evens out loud and quiet moments while listening in audio only on Kick and Twitch.")
                 }
 
                 if !vm.ignored.isEmpty {

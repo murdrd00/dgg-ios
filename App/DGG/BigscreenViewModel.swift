@@ -369,10 +369,54 @@ final class BigscreenViewModel {
             // Whatever was true of the picture before, it starts afresh now.
             noPicture = false
             applyQuality()
+            reloadForAudioPath()
         }
     }
     /// YouTube plays in its own web player, which has no audio-only form.
     var audioMode: Bool { audioOnly && selected?.platform != .youtube }
+
+    /// Evens out loud and quiet in audio only, like Compresstiny's Auto volume.
+    /// AVPlayer won't let its sound be processed, so this plays the audio itself.
+    var autoVolume: Bool = Saved.value("autoVolume", false) {
+        didSet {
+            Saved.store(autoVolume, "autoVolume")
+            reloadForAudioPath()
+        }
+    }
+    /// True while `autoVolumePlayer` is the one making the sound.
+    private var engineActive = false
+    private var enginePlaying = false
+    @ObservationIgnored private lazy var autoVolumePlayer: AutoVolumePlayer = {
+        let p = AutoVolumePlayer()
+        p.onPlaying = { [weak self] playing in
+            self?.enginePlaying = playing
+            self?.updatePlaying()
+        }
+        p.onRestartNeeded = { [weak self] in
+            guard let self, self.engineActive, let ref = self.selected else { return }
+            self.load(ref, quality: self.wantsQuality)
+        }
+        p.onRouteLost = { [weak self] in self?.pauseListening() }
+        p.onUnsupported = { [weak self] in
+            guard let self, self.engineActive, let ref = self.selected else { return }
+            self.noAutoVolume.insert(ref.token)
+            self.load(ref, quality: self.wantsQuality)
+        }
+        return p
+    }()
+    /// Streams whose audio it couldn't read, which go back to AVPlayer.
+    private var noAutoVolume: Set<String> = []
+
+    private func usesAutoVolume(_ ref: EmbedRef) -> Bool {
+        autoVolume && audioOnly && (ref.platform == .kick || ref.platform == .twitch)
+            && !noAutoVolume.contains(ref.token)
+    }
+
+    /// Switching to or from Auto volume changes what plays the sound.
+    private func reloadForAudioPath() {
+        guard let ref = selected, ref.playsInApp, usesAutoVolume(ref) != engineActive else { return }
+        load(ref, quality: wantsQuality)
+    }
     var backgroundAudio: Bool = Saved.value("backgroundAudio", true) {
         didSet { Saved.store(backgroundAudio, "backgroundAudio") }
     }
@@ -403,6 +447,7 @@ final class BigscreenViewModel {
     private var wantsAudioOnly: Bool { audioMode || (inBackground && !pipActive) }
 
     private func applyQuality() {
+        guard !engineActive else { return }
         player.currentItem?.preferredPeakBitRate = peak(wantsAudioOnly ? Self.audioBitRate(for: shown ?? selected) : wantsQuality,
                                                         rewritten: liveLoaders[active] != nil)
     }
@@ -435,7 +480,7 @@ final class BigscreenViewModel {
 
     private func pauseListening() {
         guard selected != nil, selected?.youTubeAppURL == nil else { return }
-        player.pause()
+        if engineActive { autoVolumePlayer.pause() } else { player.pause() }
         pausedAt = Date()
         userPaused = true
         updateNowPlaying()
@@ -447,6 +492,8 @@ final class BigscreenViewModel {
         userPaused = false
         if let pausedAt, Date().timeIntervalSince(pausedAt) > 5, let selected {
             load(selected, quality: wantsQuality)
+        } else if engineActive {
+            autoVolumePlayer.resume()
         } else {
             player.play()
         }
@@ -460,7 +507,7 @@ final class BigscreenViewModel {
         let list = switchableEmbeds
         let at = list.firstIndex { $0.ref == selected }
         nowPlaying.show(title: name(for: shown), subtitle: titles[shown.token] ?? "destiny.gg",
-                        playing: player.timeControlStatus != .paused,
+                        playing: engineActive ? !userPaused : player.timeControlStatus != .paused,
                         canGoNext: at.map { $0 + 1 < list.count } ?? false,
                         canGoBack: at.map { $0 > 0 } ?? false)
     }
@@ -753,7 +800,7 @@ final class BigscreenViewModel {
     private var playingObservers: [NSKeyValueObservation] = []
 
     private func updatePlaying() {
-        isPlaying = player.timeControlStatus == .playing
+        isPlaying = engineActive ? enginePlaying : player.timeControlStatus == .playing
         updateNowPlaying()
     }
     private let maxLines = 300
@@ -1502,6 +1549,40 @@ final class BigscreenViewModel {
         await item.seek(to: target, toleranceBefore: .zero, toleranceAfter: CMTime(seconds: 1, preferredTimescale: 1000))
     }
 
+    // MARK: - Auto volume
+
+    private func loadAutoVolume(_ ref: EmbedRef, id: Int, reuse: URL?) {
+        Task { [resolver] in
+            do {
+                let url: URL
+                if let reuse { url = reuse } else { url = try await resolver.resolve(ref) }
+                guard id == loadID else { return }
+                liveEdge.stop()
+                players.forEach { $0.replaceCurrentItem(with: nil) }
+                settleLayers()
+                engineActive = true
+                enginePlaying = false
+                autoVolumePlayer.start(master: url, cap: Self.audioBitRate(for: ref), cushion: wantsCushion)
+                streamURL = url
+                shown = ref
+                backdrop = nil
+                noPicture = false
+                lastGood = (ref.token, url, Date())
+                updatePlaying()
+            } catch {
+                guard id == loadID else { return }
+                fail(Self.explain(error))
+            }
+        }
+    }
+
+    private func stopAutoVolume() {
+        guard engineActive else { return }
+        engineActive = false
+        enginePlaying = false
+        autoVolumePlayer.stop()
+    }
+
     // MARK: - Getting back after losing signal
 
     /// AVPlayer rides out a short loss by itself. After a long one the stream
@@ -1551,7 +1632,8 @@ final class BigscreenViewModel {
             recoveryAttempts = 0
             return
         }
-        if isPlaying {
+        // It keeps trying through lost signal by itself.
+        if isPlaying || engineActive {
             lastProgress = Date()
             recoveryAttempts = 0
             return
@@ -1628,6 +1710,7 @@ final class BigscreenViewModel {
     }
 
     private func clearPicture() {
+        stopAutoVolume()
         loadID += 1
         players.forEach { $0.replaceCurrentItem(with: nil) }
         streamURL = nil
@@ -1736,6 +1819,12 @@ final class BigscreenViewModel {
             }
             return
         }
+
+        if usesAutoVolume(ref) {
+            loadAutoVolume(ref, id: id, reuse: reuse)
+            return
+        }
+        stopAutoVolume()
 
         Task { [resolver] in
             do {
